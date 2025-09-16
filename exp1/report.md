@@ -148,27 +148,8 @@
   流程图
 
 
-```mermaid
-graph TD
-    A[CPU上电/QEMU启动] --> B{PC = 0x80000000};
-    B --> C[执行 entry.S 的 _start];
 
-    subgraph 汇编启动阶段 entry.S
-        C --> D[设置栈指针sp];
-        D --> E[清零.bss段];
-        E --> F[调用C主函数 kmain];
-    end
-
-    subgraph C语言运行阶段 main.c
-        F --> G[执行 uart_puts];
-        G --> H{打印 Hello OS};
-        H --> I[进入 while 死循环];
-    end
-
-    I --> J[内核挂起, 等待中断];
-    
-```
-
+![alt text](流程图.png)
   内存设计方案
 
 ```
@@ -273,5 +254,5 @@ graph TD
 ### 3.4 运行截图/录屏
 
 
-![结果](image.png)
+![结果](运行结果.png)
 *(截图说明：上图显示了在终端中执行 `make qemu` 命令后的输出结果。首先是编译过程的日志，随后QEMU启动，并成功打印出 "Hello OS " 字符串，验证了实验的成功。)*
