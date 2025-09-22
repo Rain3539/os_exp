@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <console.h>
+#include <stddef.h>
 
 // --- 优化：为十进制转换提供两位数字的查找表 ---
 static const char g_two_digits[] =
@@ -18,8 +19,8 @@ static const char g_two_digits[] =
 /**
  * @brief [重构] 将数字转换为字符串并存入缓冲区
  *
- * 这个新版本不再直接打印，而是将结果写入`out_buf`。
- * 这样做是为了能先计算出数字字符串的长度，以便处理宽度和填充。
+ * 这个函数将一个数字转换为字符串形式，并存储到提供的缓冲区中。
+ * 支持十进制和十六进制两种进制。
  *
  * @param out_buf 输出缓冲区
  * @param num 要转换的数字
@@ -27,6 +28,11 @@ static const char g_two_digits[] =
  * @return 写入缓冲区的字符数
  */
 static int num_to_str(char *out_buf, long long num, int base) {
+    // NULL指针检查
+    if (!out_buf) {
+        return 0;
+    }
+    
     char temp_buf[32]; // 临时缓冲区，用于逆序存放数字
     int i = 0;
     const char *digits = "0123456789abcdef";
@@ -71,128 +77,157 @@ static int num_to_str(char *out_buf, long long num, int base) {
 }
 
 /**
- * @brief 简单的strlen实现
+ * @brief 安全的strlen实现，带NULL指针检查
+ *
+ * 计算字符串的长度，如果字符串为NULL，则返回0。
+ *
+ * @param s 输入字符串
+ * @return 字符串长度
  */
 static int strlen(const char *s) {
+    if (!s) {
+        return 0;
+    }
+    
     int len = 0;
-    while (s && s[len]) {
+    while (s[len]) {
         len++;
     }
     return len;
 }
 
+
 /**
- * @brief [重构] 内核格式化输出函数，支持宽度和零填充
+ * @brief  printf的核心实现，增加返回值和NULL检查
  *
- * 支持格式:
- * %d, %x, %s, %c, %%
- * 支持宽度: %5d, %8s
- * 支持零填充: %08x
+ * 解析格式化字符串并输出到控制台，支持%d、%x、%s、%c等格式。
  *
  * @param fmt 格式化字符串
- * @param ... 可变参数
- * @return 总是返回0
+ * @param ap va_list 类型的参数列表
+ * @return 成功则返回打印的字符数，失败则返回负数
  */
-int printf(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
+static int vprintf(const char *fmt, va_list ap) {
+    // --- 健壮性检查：处理NULL格式字符串 ---
+    if (fmt == NULL) {
+        console_puts("(Error: NULL format string)");
+        return -1; // 返回错误码
+    }
 
-    char num_buf[32]; // 用于存放数字转换结果的缓冲区
+    int count = 0; // 用于统计打印的字符数
+    char num_buf[32];
 
     while (*fmt) {
-        if (*fmt != '%') {
+        if (*fmt != '%') { // 普通字符直接输出
             console_putc(*fmt);
+            count++;
             fmt++;
             continue;
         }
 
-        fmt++; // 跳过 '%'
+        fmt++; // 跳过'%'字符
 
-        // --- 解析标志和宽度 ---
-        int zero_pad = 0;
-        int width = 0;
+        int zero_pad = 0; // 是否需要零填充
+        int width = 0;    // 最小宽度
 
-        // 1. 解析标志 (目前只支持'0')
-        if (*fmt == '0') {
-            zero_pad = 1;
-            fmt++;
-        }
+        // 解析零填充标志
+        if (*fmt == '0') { zero_pad = 1; fmt++; }
+        // 解析宽度
+        while (*fmt >= '0' && *fmt <= '9') { width = width * 10 + (*fmt - '0'); fmt++; }
 
-        // 2. 解析宽度
-        while (*fmt >= '0' && *fmt <= '9') {
-            width = width * 10 + (*fmt - '0');
-            fmt++;
-        }
-
-        // --- 解析并处理类型 ---
+        // 根据格式符处理不同类型
         switch (*fmt) {
-            case 'd': {
+            case 'd': { // 十进制整数
                 long long val = va_arg(ap, int);
                 int is_negative = (val < 0);
                 if (is_negative) val = -val;
-
                 int len = num_to_str(num_buf, val, 10);
                 if (is_negative) len++;
-
                 int pad_len = (width > len) ? (width - len) : 0;
                 char pad_char = zero_pad ? '0' : ' ';
-
-                // 非零填充时，先打印空格
-                if (!zero_pad) {
-                    for (int i = 0; i < pad_len; i++) console_putc(' ');
-                }
-
+                if (!zero_pad) { for (int i = 0; i < pad_len; i++) console_putc(' '); }
                 if (is_negative) console_putc('-');
-
-                // 零填充时，在符号后面打印0
-                if (zero_pad) {
-                    for (int i = 0; i < pad_len; i++) console_putc('0');
-                }
-
+                if (zero_pad) { for (int i = 0; i < pad_len; i++) console_putc('0'); }
                 console_puts(num_buf);
+                count += pad_len + len;
                 break;
             }
-            case 'x': {
-                long long val = va_arg(ap, int); // 依然按int获取，用long long处理
+            case 'x': { // 十六进制整数
+                long long val = va_arg(ap, int);
                 int len = num_to_str(num_buf, val, 16);
                 int pad_len = (width > len) ? (width - len) : 0;
                 char pad_char = zero_pad ? '0' : ' ';
-
                 for (int i = 0; i < pad_len; i++) console_putc(pad_char);
                 console_puts(num_buf);
+                count += pad_len + len;
                 break;
             }
-            case 's': {
+            case 's': { // 字符串
                 const char *s = va_arg(ap, const char *);
                 if (s == 0) s = "(null)";
                 int len = strlen(s);
                 int pad_len = (width > len) ? (width - len) : 0;
-
-                // 字符串是右对齐，左边补空格
                 for (int i = 0; i < pad_len; i++) console_putc(' ');
                 console_puts(s);
+                count += pad_len + len;
                 break;
             }
-            case 'c': {
+            case 'c': { // 单个字符
                 char c = (char)va_arg(ap, int);
                 int pad_len = (width > 1) ? (width - 1) : 0;
                 for (int i = 0; i < pad_len; i++) console_putc(' ');
                 console_putc(c);
+                count += pad_len + 1;
                 break;
             }
-            case '%': {
+            case '%': { // 百分号
                 console_putc('%');
+                count++;
                 break;
             }
-            default: {
+            default: { // 未知格式符
                 console_putc('%');
                 console_putc(*fmt);
+                count += 2;
                 break;
             }
         }
         fmt++;
     }
+    return count; // 返回实际打印的字符数
+}
 
+/**
+ * @brief [修改] 标准printf函数，现在返回vprintf的结果
+ *
+ * @param fmt 格式化字符串
+ * @return 打印的字符数
+ */
+int printf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int count = vprintf(fmt, ap);
     va_end(ap);
-    return 0;
+    return count;
+}
+
+/**
+ * @brief 带颜色的格式化输出函数
+ *
+ * 在输出前后添加颜色控制符。
+ *
+ * @param color 颜色代码
+ * @param fmt 格式化字符串
+ * @return 打印的字符数
+ */
+int printf_color(term_color_t color, const char *fmt, ...) {
+    int count = 0;
+    count += printf("\033[%dm", color); // 设置颜色
+
+    va_list ap;
+    va_start(ap, fmt);
+    count += vprintf(fmt, ap); // 输出内容
+    va_end(ap);
+
+    count += printf("\033[%dm", COLOR_RESET); // 重置颜色
+    return count;
 }

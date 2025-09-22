@@ -1,12 +1,12 @@
 # 实验二：内核printf与清屏功能实现报告
 
-## 实验概述
+## 一、实验概述
 
 本实验在实验一的基础上，实现了功能完整的内核printf和清屏功能，通过分层设计构建了完整的输出系统架构。实验重点学习了xv6的输出系统设计思想，并独立实现了格式化字符串处理、数字转换算法和ANSI转义序列控制。在此基础上，进行了多轮优化：首先实现了I/O缓冲和算法优化，随后扩展支持了可变宽度和零填充格式化功能，最终构建了一个功能丰富、性能优异的printf系统。
 
-## 系统设计部分
+## 二、 系统设计部分
 
-### 架构设计说明
+### 2.1 架构设计说明
 
 本实验采用三层架构设计，实现了良好的模块化和可扩展性：
 
@@ -26,19 +26,20 @@
    - 解析复杂格式字符串 (%d, %x, %s, %c, %%, %8d, %08x等)
    - 处理可变参数 (stdarg.h)
    - 优化的数字到字符串转换算法（十进制查表法）
-   - **新增**：宽度计算和填充控制逻辑
+   - 宽度计算和填充控制逻辑
+   - 定位颜色输出
 
 2. **控制台抽象层 (console.c)**
    - 提供统一的字符/字符串输出接口
    - 实现清屏等控制功能
    - 缓冲机制：减少硬件交互次数
    - 批量发送优化：遇到换行符或缓冲区满时刷新
-
+  
 3. **硬件驱动层 (uart.c)**
    - UART寄存器直接操作
    - 字符发送的底层实现
 
-### 关键数据结构
+### 2.2 关键数据结构
 
 ```c
 // 可变参数列表处理
@@ -56,15 +57,15 @@ const char *digits = "0123456789abcdef";  // 支持16进制以下任意进制
 static char console_buffer[CONSOLE_BUFFER_SIZE];
 static int buffer_idx = 0;
 
-// 【优化】十进制两位数字查表
+// 十进制两位数字查表
 static const char g_two_digits[] = "00010203...99"; // 200字节查表
 
-// 【新增】格式解析状态
+// 格式解析状态
 int zero_pad = 0;          // 零填充标志
 int width = 0;             // 字段宽度
 ```
 
-### 与xv6对比分析
+### 2.3 与xv6对比分析
 
 | 特性 | 本实验实现 | xv6实现 | 对比分析 |
 |------|------------|---------|----------|
@@ -75,7 +76,7 @@ int width = 0;             // 字段宽度
 | 格式解析 | 状态机+预先缓冲 | 边解析边输出 | 本实验支持复杂格式化控制 |
 | 清屏实现 | ANSI转义序列+强制刷新 | 控制台特定实现 | 本实验更通用且响应及时 |
 
-### 设计决策理由
+### 2.4 设计决策理由
 
 1. **为什么采用两阶段输出机制？**
    - **宽度计算需求**：必须先知道内容长度才能计算填充
@@ -97,9 +98,9 @@ int width = 0;             // 字段宽度
    - **空指针安全**：内置空指针检查
    - **轻量级**：针对内核环境优化
 
-## 实验过程部分
+## 三、 实验过程部分
 
-### 任务1：深入理解xv6输出架构
+### 3.1 任务1：深入理解xv6输出架构
 
 **关键问题回答：**
 
@@ -156,7 +157,7 @@ A: 需要考虑多个层面：
 - 状态机解析使得格式扩展更加容易
 - 缓冲区机制在性能和功能扩展上都有重要作用
 
-### 任务2：设计输出系统架构
+### 3.2 任务2：设计输出系统架构
 
 **设计架构图：**
 ```
@@ -220,21 +221,39 @@ A: 已支持：
 - 零填充：%08x, %010d
 - 右对齐：所有格式默认右对齐
 
-### 任务3：实现数字转换核心算法
+### 3.3 任务3：实现数字转换核心算法
 
 **实现过程：**
 ```c
+/**
+ * @brief [重构] 将数字转换为字符串并存入缓冲区
+ *
+ * 这个函数将一个数字转换为字符串形式，并存储到提供的缓冲区中。
+ * 支持十进制和十六进制两种进制。
+ *
+ * @param out_buf 输出缓冲区
+ * @param num 要转换的数字
+ * @param base 进制 (10 或 16)
+ * @return 写入缓冲区的字符数
+ */
 static int num_to_str(char *out_buf, long long num, int base) {
+    // NULL指针检查
+    if (!out_buf) {
+        return 0;
+    }
+    
     char temp_buf[32]; // 临时缓冲区，用于逆序存放数字
     int i = 0;
-    
+    const char *digits = "0123456789abcdef";
+
+    // 单独处理0
     if (num == 0) {
         out_buf[0] = '0';
         out_buf[1] = '\0';
         return 1;
     }
-    
-    // 【优化】十进制查表法
+
+    // 对十进制使用查表法优化
     if (base == 10) {
         while (num >= 100) {
             int index = (num % 100) * 2;
@@ -242,7 +261,6 @@ static int num_to_str(char *out_buf, long long num, int base) {
             temp_buf[i++] = g_two_digits[index];
             num /= 100;
         }
-        // 处理剩余1-2位
         if (num < 10) {
             temp_buf[i++] = digits[num];
         } else {
@@ -250,21 +268,20 @@ static int num_to_str(char *out_buf, long long num, int base) {
             temp_buf[i++] = g_two_digits[index + 1];
             temp_buf[i++] = g_two_digits[index];
         }
-    } else {
-        // 其他进制使用传统方法
+    } else { // 其他进制使用原始方法
         while (num > 0) {
             temp_buf[i++] = digits[num % base];
             num /= base;
         }
     }
-    
-    // 正序复制到输出缓冲区
+
+    // 将temp_buf中的结果正序复制到out_buf
     int len = i;
     int k = 0;
     while (--i >= 0) {
         out_buf[k++] = temp_buf[i];
     }
-    out_buf[k] = '\0';
+    out_buf[k] = '\0'; // 添加字符串结束符
     return len;
 }
 ```
@@ -275,66 +292,121 @@ static int num_to_str(char *out_buf, long long num, int base) {
 3. **字符串终止**：添加'\0'，便于字符串操作
 4. **性能保持**：仍然使用查表法优化
 
-### 任务4：实现格式字符串解析
+### 3.4 任务4：实现格式字符串解析
 
 **重构后的解析流程：**
 ```c
-int printf(const char *fmt, ...) {
+/**
+ * @brief  printf的核心实现，增加返回值和NULL检查
+ *
+ * 解析格式化字符串并输出到控制台，支持%d、%x、%s、%c等格式。
+ *
+ * @param fmt 格式化字符串
+ * @param ap va_list 类型的参数列表
+ * @return 成功则返回打印的字符数，失败则返回负数
+ */
+static int vprintf(const char *fmt, va_list ap) {
+    // --- 健壮性检查：处理NULL格式字符串 ---
+    if (fmt == NULL) {
+        console_puts("(Error: NULL format string)");
+        return -1; // 返回错误码
+    }
+
+    int count = 0; // 用于统计打印的字符数
+    char num_buf[32];
+
     while (*fmt) {
-        if (*fmt != '%') {
+        if (*fmt != '%') { // 普通字符直接输出
             console_putc(*fmt);
-        } else {
-            fmt++; // 跳过'%'
-            
-            // 【新增】解析标志和宽度
-            int zero_pad = 0;
-            int width = 0;
-            
-            // 解析'0'标志
-            if (*fmt == '0') {
-                zero_pad = 1;
-                fmt++;
+            count++;
+            fmt++;
+            continue;
+        }
+
+        fmt++; // 跳过'%'字符
+
+        int zero_pad = 0; // 是否需要零填充
+        int width = 0;    // 最小宽度
+
+        // 解析零填充标志
+        if (*fmt == '0') { zero_pad = 1; fmt++; }
+        // 解析宽度
+        while (*fmt >= '0' && *fmt <= '9') { width = width * 10 + (*fmt - '0'); fmt++; }
+
+        // 根据格式符处理不同类型
+        switch (*fmt) {
+            case 'd': { // 十进制整数
+                long long val = va_arg(ap, int);
+                int is_negative = (val < 0);
+                if (is_negative) val = -val;
+                int len = num_to_str(num_buf, val, 10);
+                if (is_negative) len++;
+                int pad_len = (width > len) ? (width - len) : 0;
+                char pad_char = zero_pad ? '0' : ' ';
+                if (!zero_pad) { for (int i = 0; i < pad_len; i++) console_putc(' '); }
+                if (is_negative) console_putc('-');
+                if (zero_pad) { for (int i = 0; i < pad_len; i++) console_putc('0'); }
+                console_puts(num_buf);
+                count += pad_len + len;
+                break;
             }
-            
-            // 解析宽度数字
-            while (*fmt >= '0' && *fmt <= '9') {
-                width = width * 10 + (*fmt - '0');
-                fmt++;
+            case 'x': { // 十六进制整数
+                long long val = va_arg(ap, int);
+                int len = num_to_str(num_buf, val, 16);
+                int pad_len = (width > len) ? (width - len) : 0;
+                char pad_char = zero_pad ? '0' : ' ';
+                for (int i = 0; i < pad_len; i++) console_putc(pad_char);
+                console_puts(num_buf);
+                count += pad_len + len;
+                break;
             }
-            
-            // 处理格式类型
-            switch (*fmt) {
-                case 'd': {
-                    // 复杂的填充逻辑处理
-                    long long val = va_arg(ap, int);
-                    int is_negative = (val < 0);
-                    if (is_negative) val = -val;
-                    
-                    int len = num_to_str(num_buf, val, 10);
-                    if (is_negative) len++;
-                    
-                    int pad_len = (width > len) ? (width - len) : 0;
-                    
-                    // 填充处理
-                    if (!zero_pad) {
-                        for (int i = 0; i < pad_len; i++) 
-                            console_putc(' ');
-                    }
-                    
-                    if (is_negative) console_putc('-');
-                    
-                    if (zero_pad) {
-                        for (int i = 0; i < pad_len; i++) 
-                            console_putc('0');
-                    }
-                    
-                    console_puts(num_buf);
-                    break;
-                }
-                // ... 其他格式处理
+            case 's': { // 字符串
+                const char *s = va_arg(ap, const char *);
+                if (s == 0) s = "(null)";
+                int len = strlen(s);
+                int pad_len = (width > len) ? (width - len) : 0;
+                for (int i = 0; i < pad_len; i++) console_putc(' ');
+                console_puts(s);
+                count += pad_len + len;
+                break;
+            }
+            case 'c': { // 单个字符
+                char c = (char)va_arg(ap, int);
+                int pad_len = (width > 1) ? (width - 1) : 0;
+                for (int i = 0; i < pad_len; i++) console_putc(' ');
+                console_putc(c);
+                count += pad_len + 1;
+                break;
+            }
+            case '%': { // 百分号
+                console_putc('%');
+                count++;
+                break;
+            }
+            default: { // 未知格式符
+                console_putc('%');
+                console_putc(*fmt);
+                count += 2;
+                break;
             }
         }
+        fmt++;
     }
+    return count; // 返回实际打印的字符数
+}
+
+/**
+ * @brief [修改] 标准printf函数，现在返回vprintf的结果
+ *
+ * @param fmt 格式化字符串
+ * @return 打印的字符数
+ */
+int printf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int count = vprintf(fmt, ap);
+    va_end(ap);
+    return count;
 }
 ```
 
@@ -343,13 +415,57 @@ int printf(const char *fmt, ...) {
 - **多阶段处理**：解析→转换→长度计算→填充→输出
 - **类型特殊处理**：不同类型有不同的填充规则
 
-### 任务5：实现清屏功能
+### 3.5 任务5：实现清屏功能
 
-**实现保持不变：**
+**清屏功能：**
 ```c
 void clear_screen(void) {
-    console_puts("\033[2J\033[H");
-    console_flush(); // 确保清屏指令立即生效
+    console_puts("\033[2J");    // 清除屏幕
+    console_puts("\033[3J");    // 清除滚动缓冲区
+    console_puts("\033[H");     // 光标归位
+    console_flush();
+}
+```
+**定位功能：**
+
+```c
+void goto_xy(int x, int y) {
+    // 使用printf来格式化转义序列字符串，这是最简单的方法
+    printf("\033[%d;%dH", y, x);
+}
+```
+
+**颜色输出功能：**
+
+```c
+
+/**
+ * @brief 带颜色的格式化输出函数
+ *
+ * 在输出前后添加颜色控制符。
+ *
+ * @param color 颜色代码
+ * @param fmt 格式化字符串
+ * @return 打印的字符数
+ */
+int printf_color(term_color_t color, const char *fmt, ...) {
+    int count = 0;
+    count += printf("\033[%dm", color); // 设置颜色
+
+    va_list ap;
+    va_start(ap, fmt);
+    count += vprintf(fmt, ap); // 输出内容
+    va_end(ap);
+
+    count += printf("\033[%dm", COLOR_RESET); // 重置颜色
+    return count;
+}
+```
+
+**清除行功能：**
+```c
+void clear_line(void) {
+    console_puts("\033[2K\r");
 }
 ```
 
@@ -357,81 +473,152 @@ void clear_screen(void) {
 - 清屏后立即刷新，不受缓冲影响
 - 为格式化测试提供清洁的显示环境
 
-### 任务6：综合测试与优化
+### 3.6 任务6：综合测试与优化
 
 **扩展测试用例：**
 ```c
-void run_printf_tests(void) {
-    // 基本功能测试
-    printf("Integer: %d\n", 42);
-    printf("Hex: 0x%x\n", 0xABCDEF);
-    
-    // 【新增】宽度测试
-    printf("Width (d): [%10d]\n", 123);
-    printf("Width (d, negative): [%10d]\n", -123);
-    printf("Width (x): [0x%8x]\n", 0xABCD);
-    printf("Width (s): [%15s]\n", "right-aligned");
-    printf("Width (c): [%5c]\n", 'C');
-    
-    // 【新增】零填充测试
-    printf("ZeroPad (d): [%010d]\n", 123);
-    printf("ZeroPad (d, negative): [%010d]\n", -123);
-    printf("ZeroPad (x): [0x%08x]\n", 0xABCD);
+void run_all_tests() {
+    test_console_features();
+    test_basic_formatting();
+    test_edge_cases();
+    test_error_recovery();
+    test_performance(); 
+    printf("\n\n======== 所有测试执行完毕! ========\n");
 }
+
 ```
 
 **性能优化延续：**
-- I/O缓冲机制继续有效
-- 查表法优化继续适用
-- 新增的格式化逻辑对性能影响最小
+- I/O缓冲机制有效
+- 查表法优化适用
 
-## 测试验证部分
 
-### 功能测试结果
+## 四、 测试验证部分
 
-**基本功能测试：**
+### 4.1 功能测试结果
+
+**清屏测试：**
+最先执行的清屏测试
+```c
+clear_screen();
+printf("屏幕已清除，您现在应该看到一个空白屏幕 (暂停3秒)...\n");
+   
 ```
---- Basic Tests ---
-Integer: 42
-Negative: -123
-Hex: 0xabcdef
-String: Hello World!
-Char: X, Percent: %
+以下两张图为清屏指令执行前后的对比
+![结果](清屏前.png)
+![结果](清屏测试.png)
+
+**定位颜色及清除行输出测试：**
+
+```c
+ // 步骤3: 光标定位和颜色输出
+    goto_xy(10, 5);
+    printf_color(COLOR_YELLOW, "第一站: (10, 5)");
+    console_flush(); // 刷新以确保立即显示
+    delay(40000000);
+    
+    goto_xy(25, 10);
+    printf_color(COLOR_CYAN, "第二站: (25, 10)");
+    console_flush(); // 刷新以确保立即显示
+    delay(40000000);
+
+    goto_xy(5, 15);
+    printf_color(COLOR_MAGENTA, "第三站: (5, 15), 这一行即将被清除...");
+    console_flush(); // 刷新以确保立即显示
+    delay(60000000);
+
+    // 步骤4: 清除行
+    goto_xy(1, 15);
+    clear_line();
+    printf_color(COLOR_GREEN, "行已清除!");
+    console_flush(); // 刷新以确保立即显示
+    delay(40000000);
+
+    // 步骤5: 恢复光标到屏幕末尾
+    goto_xy(1, 20);
+    printf("演示结束。\n");
 ```
 
-**边界条件测试：**
+![结果](定位颜色及清除行输出测试.png)
+
+**基础格式化功能测试：**
+```c
+void test_basic_formatting() {
+    printf("\n--- 2. 基础格式化功能测试 ---\n");
+    printf("整数: %d, 负数: %d, 零: %d\n", 123, -456, 0);
+    printf("十六进制: 0x%x, 0x%x\n", 0xDEADBEEF, 12345);
+    printf("字符串: \"%s\", 字符: '%c', 百分号: '%%'\n", "Hello OS", 'A');
+    printf("宽度: [%8d], [%-8d]\n", 123, 123); 
+    printf("零填充: [%08d], [%08x]\n", 123, 0xABCD);
+    printf("负数零填充: [%08d]\n", -123);
+}
 ```
---- Edge Case Tests ---
-INT_MAX: 2147483647
-INT_MIN: -2147483648
-NULL string: (null)
-Empty string: 
+![结果](基础格式化功能测试.png)
+
+**边界条件处理测试：**
+```c
+void test_edge_cases() {
+    printf("\n--- 3. 边界条件处理测试 ---\n");
+    printf("INT_MAX: %d\n", 2147483647);
+    printf("INT_MIN: %d\n", -2147483648);
+    // 重新启用这些被注释掉的测试
+    printf("空字符串: \"%s\"\n", "");
+    printf("NULL字符串参数 (%%s): \"%s\"\n", (char*)NULL);
+    printf("带宽度的NULL字符串: [%10s]\n", (char*)NULL);
+}
 ```
 
-**【新增】高级格式化测试：**
-```
---- Width and Padding Tests ---
-Width (d): [       123]
-Width (d, negative): [      -123]
-Width (x): [0x    abcd]
-Width (s): [  right-aligned]
-Width (c): [    C]
+![结果](边界条件处理测试.png)
 
---- Zero Padding Tests ---
-ZeroPad (d): [0000000123]
-ZeroPad (d, negative): [-000000123]
-ZeroPad (x): [0x0000abcd]
-```
 
-### 性能数据
+**错误恢复测试：**
+```c
+void test_error_recovery() {
+    printf("\n--- 4. 错误恢复测试 ---\n");
+    printf("测试1: NULL格式字符串...\n");
+    int result = printf(NULL);
+    printf("\nprintf(NULL) 返回值: %d (预期为 -1)\n", result);
+    
+    printf("\n测试2: 未知格式化符号 (%%q)...\n");
+    printf("输出 -> %q <-\n", 123); // 123参数将被忽略
+}
+```
+![结果](错误恢复测试.png)
+
+
+**性能测试（大量输出）：**
+```c
+void test_performance() {
+   
+    printf("\n--- 5. 性能测试 (大量输出) ---\n");
+    printf("将在3秒后开始连续打印50行...\n");
+    delay(800000000);
+
+    for (int i = 1; i <= 50; i++) {
+        printf("Line %02d/%d: This is a test of the console's high-volume output capability. The quick brown fox jumps over the lazy dog. 1234567890.\n", i, 50);
+    }
+    printf("大量输出测试完成。\n");
+}
+```
+![结果](性能测试.png)
+![结果](性能测试续.png)
+
+
+
+
+
+
+
+
+### 4.2 功能优化前后数据
 
 **功能扩展后的性能对比：**
 
-| 操作类型 | 基础版本 | 缓冲优化版本 | 完整格式化版本 | 性能变化 |
-|----------|----------|--------------|----------------|----------|
-| 简单整数输出 | N次uart_putc | 1-2次flush | 1-2次flush | 性能保持 |
-| 格式化整数(%08d) | 不支持 | 不支持 | 额外长度计算+填充 | 轻微开销 |
-| 大数字转换 | 多次除法 | 查表法优化 | 查表法优化 | 50%提升保持 |
+| 操作类型 | 基础版本 | 完整格式化版本 | 性能变化 |
+|----------|----------|----------------|----------|
+| 简单整数输出 | N次uart_putc | 1-2次flush | 性能保持 |
+| 格式化整数(%08d) | 不支持  | 额外长度计算+填充 | 轻微开销 |
+| 大数字转换 | 多次除法  | 查表法优化 | 50%提升保持 |
 
 **内存使用分析：**
 - 原有缓冲区：360字节
@@ -440,47 +627,10 @@ ZeroPad (x): [0x0000abcd]
 - 总增加：约64字节
 - 功能提升：支持完整的宽度和填充格式化
 
-### 格式化功能验证
 
-**宽度控制测试：**
-```c
-printf("[%10d]", 123);      // 输出: [       123]
-printf("[%10d]", -123);     // 输出: [      -123]
-printf("[%8x]", 0xABCD);    // 输出: [    abcd]
-printf("[%15s]", "test");   // 输出: [           test]
-```
+## 五、 思考题回答
 
-**零填充测试：**
-```c
-printf("[%010d]", 123);     // 输出: [0000000123]
-printf("[%010d]", -123);    // 输出: [-000000123]
-printf("[%08x]", 0xABCD);   // 输出: [0000abcd]
-```
-
-**边界情况验证：**
-```c
-printf("[%01d]", 123);      // 输出: [123] (宽度不足时不填充)
-printf("[%05d]", 0);        // 输出: [00000]
-printf("[%08x]", 0);        // 输出: [00000000]
-```
-
-### 异常测试
-
-**格式错误处理：**
-```c
-printf("%z", 123);          // 输出: %z (未知格式原样输出)
-printf("%0", 123);          // 输出: %0 (不完整格式)
-printf("%999d", 123);       // 输出: 123 (超大宽度安全处理)
-```
-
-**缓冲区安全：**
-- num_buf[32]足够处理64位数字的所有情况
-- 字符串拷贝包含边界检查
-- 填充循环包含长度限制
-
-## 思考题回答
-
-### 1. 架构设计
+### 5.1. 架构设计
 
 **Q: 为什么需要分层？每层的职责如何划分？**
 A: 分层设计在复杂格式化支持中更加重要：
@@ -502,7 +652,7 @@ typedef struct {
 void console_format_for_device(output_device_t *dev, const char *content);
 ```
 
-### 2. 算法选择
+### 5.2. 算法选择
 
 **Q: 数字转字符串为什么不用递归？**
 A: 递归在格式化场景下问题更严重：
@@ -522,7 +672,7 @@ if (base == 16) {
 }
 ```
 
-### 3. 性能优化
+### 5.3. 性能优化
 
 **Q: 当前实现的性能瓶颈在哪里？**
 A: 主要瓶颈：
@@ -545,21 +695,16 @@ void console_put_repeat(char c, int count) {
 }
 ```
 
-### 4. 错误处理
+### 5.4. 错误处理
 
 **Q: printf遇到NULL指针应该如何处理？**
-A: 多层次安全处理：
+A: 安全处理：
 ```c
-// 字符串参数安全处理
-const char *s = va_arg(ap, const char *);
-if (s == 0) s = "(null)";
-
-// strlen的内置NULL检查
-static int strlen(const char *s) {
-    int len = 0;
-    while (s && s[len]) len++;  // s为NULL时直接返回0
-    return len;
-}
+  // --- 健壮性检查：处理NULL格式字符串 ---
+    if (fmt == NULL) {
+        console_puts("(Error: NULL format string)");
+        return -1; // 返回错误码
+    }
 ```
 
 **Q: 格式字符串错误时的恢复策略是什么？**
@@ -573,48 +718,3 @@ default: {
     break;
 }
 ```
-
-### 5. 【新增】格式化特定问题
-
-**Q: 零填充和符号位的处理顺序为什么重要？**
-A: 标准定义要求符号在最前：
-- 正确：-000123（符号+零填充+数字）
-- 错误：000-123（零填充+符号+数字）
-- 实现：先输出符号，再填充零，最后输出数字
-
-**Q: 如何处理宽度小于内容长度的情况？**
-A: 不截断，完整输出：
-```c
-int pad_len = (width > len) ? (width - len) : 0;
-// 当width <= len时，pad_len为0，不进行填充
-```
-
-**Q: 为什么需要两阶段输出？**
-A: 格式化的必然要求：
-- **阶段1**：内容生成，获取实际长度
-- **阶段2**：根据长度计算填充，控制输出格式
-- **无法合并**：必须先知道内容才能决定格式
-
-## 实验总结
-
-### 技术收获
-
-1. **复杂系统设计**：从简单功能到复杂格式化的演进过程
-2. **算法重构能力**：在保持性能的前提下扩展功能
-3. **状态机设计**：复杂格式解析的系统化方法
-4. **两阶段处理模式**：先处理内容，再控制格式的设计思想
-
-### 功能演进轨迹
-
-1. **第一阶段**：基础printf功能，简单格式支持
-2. **第二阶段**：性能优化，I/O缓冲和算法改进
-3. **第三阶段**：功能扩展，宽度控制和零填充支持
-
-### 最终成果
-
-**功能完整性：**
-- ✅ 基本格式化：%d, %x, %s, %c, %%
-- ✅ 宽度控制：%8d, %15s, %5c
-- ✅ 零填充：%08x, %010d
-- ✅ 负数正确处理：符号位置正确
-- ✅ 边界情况安全：NULL指针、空字符串、超大宽度
