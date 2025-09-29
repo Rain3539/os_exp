@@ -5,12 +5,12 @@
 #define UART_BASE 0x10000000L
 
 // UART寄存器偏移量
-#define RHR 0 // Receive Holding Register (read)
-#define THR 0 // Transmit Holding Register (write)
-#define LSR 5 // Line Status Register
+#define RHR 0   // 接收保持寄存器（读操作）
+#define THR 0   // 发送保持寄存器（写操作） 
+#define LSR 5   // 线路状态寄存器
 
-// LSR寄存器的位定义
-#define LSR_TX_IDLE (1 << 5) // Transmitter is empty and ready
+// LSR寄存器的位定义   LSR 寄存器的第5位表示发送器是否准备好接收新数据
+#define LSR_TX_IDLE (1 << 5) 
 
 /**
  * @brief 向UART发送一个字符

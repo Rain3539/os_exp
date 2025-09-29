@@ -197,7 +197,7 @@ static int vprintf(const char *fmt, va_list ap) {
 }
 
 /**
- * @brief [修改] 标准printf函数，现在返回vprintf的结果
+ * @brief  标准printf函数，现在返回vprintf的结果
  *
  * @param fmt 格式化字符串
  * @return 打印的字符数
