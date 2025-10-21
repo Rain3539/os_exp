@@ -59,10 +59,11 @@ static int num_to_str(char *out_buf, long long num, int base) {
             temp_buf[i++] = g_two_digits[index + 1];
             temp_buf[i++] = g_two_digits[index];
         }
-    } else { // 其他进制使用原始方法
-        while (num > 0) {
-            temp_buf[i++] = digits[num % base];
-            num /= base;
+    } else { // 其他进制使用原始方法 (十六进制)
+        unsigned long long n = (unsigned long long)num;
+        while (n > 0) {
+            temp_buf[i++] = digits[n % base];
+            n /= base;
         }
     }
 
@@ -78,11 +79,6 @@ static int num_to_str(char *out_buf, long long num, int base) {
 
 /**
  * @brief 安全的strlen实现，带NULL指针检查
- *
- * 计算字符串的长度，如果字符串为NULL，则返回0。
- *
- * @param s 输入字符串
- * @return 字符串长度
  */
 static int strlen(const char *s) {
     if (!s) {
@@ -99,45 +95,36 @@ static int strlen(const char *s) {
 
 /**
  * @brief  printf的核心实现，增加返回值和NULL检查
- *
- * 解析格式化字符串并输出到控制台，支持%d、%x、%s、%c等格式。
- *
- * @param fmt 格式化字符串
- * @param ap va_list 类型的参数列表
- * @return 成功则返回打印的字符数，失败则返回负数
  */
 static int vprintf(const char *fmt, va_list ap) {
-    // --- 健壮性检查：处理NULL格式字符串 ---
     if (fmt == NULL) {
         console_puts("(Error: NULL format string)");
-        return -1; // 返回错误码
+        return -1; 
     }
 
-    int count = 0; // 用于统计打印的字符数
+    int count = 0; 
     char num_buf[32];
 
     while (*fmt) {
-        if (*fmt != '%') { // 普通字符直接输出
+        if (*fmt != '%') { 
             console_putc(*fmt);
             count++;
             fmt++;
             continue;
         }
 
-        fmt++; // 跳过'%'字符
+        fmt++; 
 
-        int zero_pad = 0; // 是否需要零填充
-        int width = 0;    // 最小宽度
+        int zero_pad = 0; 
+        int width = 0;    
 
-        // 解析零填充标志
         if (*fmt == '0') { zero_pad = 1; fmt++; }
-        // 解析宽度
         while (*fmt >= '0' && *fmt <= '9') { width = width * 10 + (*fmt - '0'); fmt++; }
 
-        // 根据格式符处理不同类型
         switch (*fmt) {
-            case 'd': { // 十进制整数
-                long long val = va_arg(ap, int);
+            case 'd': { 
+                // [修正] 使用 long long 来接收可变参数，确保能处理64位整数
+                long long val = va_arg(ap, long long);
                 int is_negative = (val < 0);
                 if (is_negative) val = -val;
                 int len = num_to_str(num_buf, val, 10);
@@ -151,8 +138,9 @@ static int vprintf(const char *fmt, va_list ap) {
                 count += pad_len + len;
                 break;
             }
-            case 'x': { // 十六进制整数
-                long long val = va_arg(ap, int);
+            case 'x': { 
+                // [修正] 使用 long long 来接收可变参数，确保能处理64位地址/整数
+                long long val = va_arg(ap, long long);
                 int len = num_to_str(num_buf, val, 16);
                 int pad_len = (width > len) ? (width - len) : 0;
                 char pad_char = zero_pad ? '0' : ' ';
@@ -161,7 +149,7 @@ static int vprintf(const char *fmt, va_list ap) {
                 count += pad_len + len;
                 break;
             }
-            case 's': { // 字符串
+            case 's': { 
                 const char *s = va_arg(ap, const char *);
                 if (s == 0) s = "(null)";
                 int len = strlen(s);
@@ -171,20 +159,20 @@ static int vprintf(const char *fmt, va_list ap) {
                 count += pad_len + len;
                 break;
             }
-            case 'c': { // 单个字符
-                char c = (char)va_arg(ap, int);
+            case 'c': { 
+                char c = (char)va_arg(ap, int); // char 在可变参数中会提升为 int
                 int pad_len = (width > 1) ? (width - 1) : 0;
                 for (int i = 0; i < pad_len; i++) console_putc(' ');
                 console_putc(c);
                 count += pad_len + 1;
                 break;
             }
-            case '%': { // 百分号
+            case '%': { 
                 console_putc('%');
                 count++;
                 break;
             }
-            default: { // 未知格式符
+            default: { 
                 console_putc('%');
                 console_putc(*fmt);
                 count += 2;
@@ -193,15 +181,10 @@ static int vprintf(const char *fmt, va_list ap) {
         }
         fmt++;
     }
-    return count; // 返回实际打印的字符数
+    return count; 
 }
 
-/**
- * @brief  标准printf函数，现在返回vprintf的结果
- *
- * @param fmt 格式化字符串
- * @return 打印的字符数
- */
+
 int printf(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -210,24 +193,16 @@ int printf(const char *fmt, ...) {
     return count;
 }
 
-/**
- * @brief 带颜色的格式化输出函数
- *
- * 在输出前后添加颜色控制符。
- *
- * @param color 颜色代码
- * @param fmt 格式化字符串
- * @return 打印的字符数
- */
+
 int printf_color(term_color_t color, const char *fmt, ...) {
     int count = 0;
-    count += printf("\033[%dm", color); // 设置颜色
+    count += printf("\033[%dm", color);
 
     va_list ap;
     va_start(ap, fmt);
-    count += vprintf(fmt, ap); // 输出内容
+    count += vprintf(fmt, ap); 
     va_end(ap);
 
-    count += printf("\033[%dm", COLOR_RESET); // 重置颜色
+    count += printf("\033[%dm", COLOR_RESET);
     return count;
 }
