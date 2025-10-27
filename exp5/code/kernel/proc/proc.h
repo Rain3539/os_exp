@@ -1,9 +1,9 @@
 // 进程管理相关结构体和常量定义
 #ifndef PROC_H
 #define PROC_H
-
 #include "../type.h"
 #include "../mm/riscv.h"
+
 // 最大进程数
 #define NPROC 64
 
@@ -21,7 +21,8 @@ enum procstate {
 struct context {
   uint64 ra;   // 返回地址
   uint64 sp;   // 栈指针
-  // 被调用者保存寄存器（callee-saved）
+  
+  // 被调用者保存寄存器(callee-saved)
   uint64 s0;
   uint64 s1;
   uint64 s2;
@@ -48,20 +49,42 @@ struct cpu {
 struct proc {
   enum procstate state;        // 进程状态
   int pid;                     // 进程ID
-  int priority;                // 优先级（0-4，数字越小优先级越高）
+  int priority;                // 优先级(0-4,数字越小优先级越高)
   pagetable_t pagetable;       // 用户页表
   struct trapframe *trapframe; // 陷阱帧指针
   struct context context;      // 进程调度上下文
   uint64 kstack;              // 内核栈虚拟地址
-  uint64 sz;                  // 进程内存大小（字节）
+  uint64 sz;                  // 进程内存大小(字节)
   void *chan;                 // 睡眠通道
   int killed;                 // 是否被杀死
   int xstate;                 // 退出状态
   struct proc *parent;        // 父进程指针
-  char name[16];              // 进程名称（用于调试）
+  char name[16];              // 进程名称(用于调试)
+  void (*entry_func)(void);   // 进程入口函数指针
 };
 
 extern struct cpu cpus[1];
 extern struct proc proc[NPROC];
+
+// 函数声明
+struct cpu* mycpu(void);
+struct proc* myproc(void);
+void procinit(void);
+int create_process(void (*entry)(void), char *name, int priority);
+void yield(void);
+void sched(void);
+void scheduler(void);
+void sleep(void *chan);
+void wakeup(void *chan);
+void exit(int status);
+int wait(int *status);
+int kill(int pid);
+void debug_proc_table(void);
+void freeproc(struct proc *p);
+void push_off(void);
+void pop_off(void);
+
+// 汇编函数声明
+void swtch(struct context *old, struct context *new);
 
 #endif // PROC_H

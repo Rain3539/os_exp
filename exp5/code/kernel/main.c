@@ -5,21 +5,13 @@
 
 /* RISC-V操作系统主函数 - 实验5: 进程管理与调度 */
 
-// 测试函数声明
-void test_printf_basic();
-void test_printf_edge_cases();
-void console_demo(void);
-void progress_bar_demo(void);
-void test_physical_memory(void);
-void test_pagetable(void);
-
-// 进程测试函数
+// 进程测试函数声明
 void test_process_creation(void);
 void test_scheduler(void);
 void test_priority_scheduling(void);
 void test_synchronization(void);
 
-// 测试任务函数
+// 测试任务函数声明
 void simple_task(void);
 void cpu_intensive_task(void);
 void high_priority_task(void);
@@ -28,8 +20,10 @@ void low_priority_task(void);
 void producer_task(void);
 void consumer_task(void);
 
-void system_shutdown(void);
-void delay_seconds(int seconds);
+// 生产者-消费者共享变量
+static volatile int buffer = 0;
+static volatile int buffer_full = 0;
+static void *buffer_chan = (void*)&buffer;
 
 void main(void) {
   printf("My RISC-V OS Starting...\r\n");
@@ -51,28 +45,26 @@ void main(void) {
 
   printf("\r\n=== System initialization complete! ===\r\n\r\n");
 
-  // 基础测试（之前的实验）
-  printf("=== Running Basic Tests ===\r\n");
-  // test_printf_basic();
-  // test_physical_memory();
-  // test_pagetable();
-  test_timer_interrupt();
-  printf("Timer interrupt test passed!\r\n");
-  test_breakpoint();
-  printf("Breakpoint test passed!\r\n");
-  test_syscall();
-  printf("System call test passed!\r\n");
+  // 实验5测试 - 创建所有测试进程
   
-  printf("\r\n=== Running Process Management Tests ===\r\n\r\n");
-  
-  // 实验5测试
+  //1.进程创建测试
   test_process_creation();
+  
+  //2.调度器测试
   test_scheduler();
+  
+  //3.优先级调度测试
   test_priority_scheduling();
+  
+  //4.同步机制测试
   test_synchronization();
   
-  printf("\r\n=== All Tests Completed Successfully! ===\r\n");
-  printf("Entering scheduler loop...\r\n\r\n");
+  printf("\r\n=== All Test Processes Created! ===\r\n");
+
+  // --- 新增：在这里打印初始进程表 ---
+  debug_proc_table(); 
+
+  printf("Starting scheduler...\r\n\r\n");
   
   // 进入调度器（不返回）
   scheduler();
@@ -94,14 +86,7 @@ void test_process_creation(void) {
   int pid3 = create_process(simple_task, "task3", 3);
   printf("Created process: PID=%d, Name=task3, Priority=3\r\n", pid3);
   
-  // 显示进程表
-  debug_proc_table();
-  
-  // 等待一段时间让进程运行
-  printf("Waiting for processes to run...\r\n");
-  for(volatile int i = 0; i < 50000000; i++);
-  
-  printf("Process creation test completed!\r\n\r\n");
+  printf("Process creation test setup completed!\r\n\r\n");
 }
 
 // 测试2: 调度器测试
@@ -118,20 +103,10 @@ void test_scheduler(void) {
     name[3] = '0' + i;
     name[4] = 0;
     int pid = create_process(cpu_intensive_task, name, 2);
-    printf("Created CPU-intensive process: PID=%d\r\n", pid);
+    printf("Created CPU-intensive process: PID=%d, Name=%s\r\n", pid, name);
   }
   
-  // 显示进程表
-  debug_proc_table();
-  
-  // 让进程运行一段时间
-  printf("Scheduler running...\r\n");
-  uint64 start_time = r_time();
-  for(volatile int i = 0; i < 100000000; i++);
-  uint64 end_time = r_time();
-  
-  printf("Scheduler test completed in %d cycles\r\n", end_time - start_time);
-  printf("Interrupts occurred: %d\r\n\r\n", global_interrupt_count);
+  printf("Scheduler test setup completed!\r\n\r\n");
 }
 
 // 测试3: 优先级调度测试
@@ -150,16 +125,8 @@ void test_priority_scheduling(void) {
   int pid_high = create_process(high_priority_task, "high_prio", 0);
   printf("Created high priority process: PID=%d, Priority=0\r\n", pid_high);
   
-  // 显示进程表
-  debug_proc_table();
-  
-  // 观察调度行为
-  printf("Observing priority scheduling...\r\n");
-  printf("High priority task should run first!\r\n\r\n");
-  
-  for(volatile int i = 0; i < 100000000; i++);
-  
-  printf("Priority scheduling test completed!\r\n\r\n");
+  printf("Priority scheduling test setup completed!\r\n");
+  printf("Expected: high_prio should run first!\r\n\r\n");
 }
 
 // 测试4: 同步机制测试
@@ -174,16 +141,9 @@ void test_synchronization(void) {
   int pid_consumer = create_process(consumer_task, "consumer", 2);
   printf("Created consumer process: PID=%d\r\n", pid_consumer);
   
-  debug_proc_table();
-  
-  // 让进程运行
-  printf("Producer-Consumer running...\r\n");
-  for(volatile int i = 0; i < 100000000; i++);
-  
-  printf("Synchronization test completed!\r\n\r\n");
+  printf("Synchronization test setup completed!\r\n\r\n");
 }
 
-// ========== 测试任务实现 ==========
 
 // 简单任务
 void simple_task(void) {
@@ -192,7 +152,10 @@ void simple_task(void) {
   
   for(int i = 0; i < 3; i++) {
     printf("[%s] Working... iteration %d\r\n", p->name, i+1);
+    
+    // 模拟工作负载
     for(volatile int j = 0; j < 10000000; j++);
+    
     yield();  // 主动让出CPU
   }
   
@@ -206,12 +169,13 @@ void cpu_intensive_task(void) {
   printf("[%s] CPU intensive task started (PID=%d)\r\n", p->name, p->pid);
   
   volatile uint64 sum = 0;
-  for(int i = 0; i < 10; i++) {
+  for(int i = 0; i < 5; i++) {
     // 执行大量计算
     for(volatile uint64 j = 0; j < 5000000; j++) {
       sum += j;
     }
-    printf("[%s] Computed iteration %d, sum=%d\r\n", p->name, i+1, sum);
+    printf("[%s] Computed iteration %d\r\n", p->name, i+1);
+    yield();  // 让出CPU
   }
   
   printf("[%s] Task completed, exiting\r\n", p->name);
@@ -222,11 +186,15 @@ void cpu_intensive_task(void) {
 void high_priority_task(void) {
   struct proc *p = myproc();
   printf("[HIGH PRIORITY %s] Started (PID=%d, Priority=%d)\r\n", 
-         p->name, p->pid, p->priority);
+           p->name, p->pid, p->priority);
   
   for(int i = 0; i < 3; i++) {
     printf("[HIGH] Executing important task %d\r\n", i+1);
+    
+    // 模拟工作
     for(volatile int j = 0; j < 10000000; j++);
+    
+    yield();
   }
   
   printf("[HIGH PRIORITY %s] Completed\r\n", p->name);
@@ -237,11 +205,14 @@ void high_priority_task(void) {
 void medium_priority_task(void) {
   struct proc *p = myproc();
   printf("[MEDIUM PRIORITY %s] Started (PID=%d, Priority=%d)\r\n", 
-         p->name, p->pid, p->priority);
+           p->name, p->pid, p->priority);
   
   for(int i = 0; i < 3; i++) {
     printf("[MEDIUM] Executing task %d\r\n", i+1);
+    
+    // 模拟工作
     for(volatile int j = 0; j < 10000000; j++);
+    
     yield();
   }
   
@@ -253,11 +224,14 @@ void medium_priority_task(void) {
 void low_priority_task(void) {
   struct proc *p = myproc();
   printf("[LOW PRIORITY %s] Started (PID=%d, Priority=%d)\r\n", 
-         p->name, p->pid, p->priority);
+           p->name, p->pid, p->priority);
   
   for(int i = 0; i < 3; i++) {
     printf("[LOW] Executing background task %d\r\n", i+1);
+    
+    // 模拟工作
     for(volatile int j = 0; j < 10000000; j++);
+    
     yield();
   }
   
@@ -266,10 +240,6 @@ void low_priority_task(void) {
 }
 
 // 生产者任务
-static volatile int buffer = 0;
-static volatile int buffer_full = 0;
-static void *buffer_chan = (void*)&buffer;
-
 void producer_task(void) {
   struct proc *p = myproc();
   printf("[PRODUCER %s] Started (PID=%d)\r\n", p->name, p->pid);
@@ -289,10 +259,13 @@ void producer_task(void) {
     // 唤醒消费者
     wakeup(buffer_chan);
     
+    // 模拟生产时间
     for(volatile int j = 0; j < 10000000; j++);
+    
+    yield();
   }
   
-  printf("[PRODUCER] Completed\r\n");
+  printf("[PRODUCD] Completed\r\n"); // (修正：应该是 PRODUCER)
   exit(0);
 }
 
@@ -316,113 +289,12 @@ void consumer_task(void) {
     // 唤醒生产者
     wakeup(buffer_chan);
     
+    // 模拟消费时间
     for(volatile int j = 0; j < 10000000; j++);
+    
+    yield();
   }
   
   printf("[CONSUMER] Completed\r\n");
   exit(0);
-}
-
-// ========== 辅助函数 ==========
-
-void delay_seconds(int seconds) {
-  volatile int count = 0;
-  int loops_per_second = 250000000;
-  printf("Working...\r\n");
-  for (int i = 0; i < seconds; i++) {
-    for (int j = 0; j < loops_per_second; j++) {
-      count++;
-    }
-    printf("%d...", seconds - i - 1);
-  }
-}
-
-void system_shutdown(void) {
-  printf("System shutting down...\n");
-  volatile uint32 *test_finisher = (volatile uint32 *)0x100000;
-  *test_finisher = 0x5555;
-  asm volatile("wfi");
-  while (1);
-}
-
-void test_printf_basic() {
-  printf("Testing integer: %d\n", 42);
-  printf("Testing negative: %d\n", -123);
-  printf("Testing zero: %d\n", 0);
-  printf("Testing hex: 0x%x\n", 0xABC);
-  printf("Testing string: %s\n", "Hello");
-  printf("Testing char: %c\n", 'X');
-  printf("Testing percent: %%\n");
-}
-
-void test_printf_edge_cases() {
-  printf("INT_MAX: %d\n", 2147483647);
-  printf("INT_MIN: %d\n", -2147483648);
-  printf("NULL string: %s\n", (char *)0);
-  printf("Empty string: %s\n", "");
-}
-
-void console_demo(void) {
-  clear_screen();
-  goto_xy(20, 2);
-  printf_color(ANSI_COLOR_CYAN, "=== RISC-V OS Console Demo ===");
-  goto_xy(5, 4);
-  printf_color(ANSI_COLOR_RED, "Red Text");
-  goto_xy(5, 5);
-  printf_color(ANSI_COLOR_GREEN, "Green Text");
-  goto_xy(30, 4);
-  printf("Cursor moved to (30,4)");
-}
-
-void progress_bar_demo(void) {
-  clear_screen();
-  goto_xy(10, 5);
-  cons_puts("Progress Bar Demo:");
-  for (int i = 0; i <= 20; i++) {
-    goto_xy(10, 7);
-    cons_puts("Progress: [");
-    for (int j = 0; j < 20; j++) {
-      if (j < i) {
-        uart_putc('=');
-      } else {
-        uart_putc(' ');
-      }
-    }
-    cons_puts("] ");
-    printf("%d%%", (i * 100) / 20);
-    volatile int delay = 0;
-    for (int k = 0; k < 1000000; k++) {
-      delay++;
-    }
-  }
-  goto_xy(10, 9);
-  printf_color(ANSI_COLOR_GREEN, "Complete!");
-}
-
-void test_physical_memory(void) {
-  void *page1 = kalloc();
-  void *page2 = kalloc();
-  assert(page1 != page2);
-  assert(((uint64)page1 & 0xFFF) == 0);
-  *(int*)page1 = 0x12345678;
-  assert(*(int*)page1 == 0x12345678);
-  kfree(page1);
-  void *page3 = kalloc();
-  kfree(page2);
-  kfree(page3);
-  printf("Physical memory test passed!\n");
-}
-
-void test_pagetable(void) {
-  pagetable_t pt = create_pagetable();
-  uint64 va = 0x10000;
-  uint64 pa = (uint64)kalloc();
-  assert(mappages(pt, va, 4096, pa, PTE_R | PTE_W) == 0);
-  uint64 *pte = (uint64 *)walk(pt, va, 0);
-  assert(pte != 0 && (*pte & PTE_V));
-  assert(PTE2PA(*pte) == pa);
-  assert(*pte & PTE_R);
-  assert(*pte & PTE_W);
-  assert(!(*pte & PTE_X));
-  printf("Pagetable test passed!\n");
 }

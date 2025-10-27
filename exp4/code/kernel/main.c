@@ -12,8 +12,8 @@ void console_demo(void);
 void progress_bar_demo(void);
 void test_physical_memory(void);
 void test_pagetable(void);
-
-
+void test_timer_interrupt(void);
+void test_interrupt_overhead(void);
 
 void system_shutdown(void);
 void delay_seconds(int seconds);
@@ -26,17 +26,15 @@ void main(void) {
   kvminithart();
   trapinithart();
 
-  //测试函数
-  // test_printf_basic();
-  // test_printf_edge_cases();
-  // test_physical_memory();
-  // test_pagetable();
-  // console_demo();
-  // progress_bar_demo();
+
 
   //中断功能测试
   test_timer_interrupt();
   printf("Timer interrupt test passed!\n");
+
+  //性能测试
+  test_interrupt_overhead();
+  printf("Interrupt overhead test passed!\n");
 
   // test_breakpoint();
   // printf("Breakpoint test passed!\n");

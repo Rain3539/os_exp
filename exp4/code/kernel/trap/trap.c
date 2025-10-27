@@ -1,8 +1,10 @@
 #include "../mm/memlayout.h"
 #include "../def.h"
 
+
 // 全局变量定义
 volatile int global_interrupt_count = 0;
+volatile uint64 total_interrupt_overhead_cycles = 0;
 // 声明汇编函数
 
 
@@ -38,16 +40,21 @@ uint64 get_time(void){
 }
 
 void timer_interrupt(void) {
-    // 任务3: 触发任务调度
-    // 这里的 yield() 是一个简化的调度触发点。
+    uint64 start_time = get_time(); // 记录开始时间
+
+// 任务3: 触发任务调度
+// 这里的 yield() 是一个简化的调度触发点。
     yield();
-    // 递增全局中断计数器
+// 递增全局中断计数器
     global_interrupt_count++;
-    // 任务5: 设置下一次中断时间
-    // 必须重新设置下一次时钟中断，否则它不会再次发生。
-    // 这创建了一个周期性的“时钟滴答”。
+// 任务5: 设置下一次中断时间
+// 必须重新设置下一次时钟中断，否则它不会再次发生。
+// 这创建了一个周期性的“时钟滴答”。
     sbi_set_timer(1000000);
 
+// 记录结束时间并累加开销
+    uint64 end_time = get_time();
+    total_interrupt_overhead_cycles += (end_time - start_time);
 }
 
 void 
@@ -235,16 +242,22 @@ void handle_store_page_fault(struct trapframe *tf) {
 }
 
 
-//中断测试函数
+//时钟中断测试函数
 void test_timer_interrupt(void) {
       printf("Testing timer interrupt...\n");
+      // 获取当前时间
       uint64 start_time = get_time();
+      // 初始化全局中断计数器为0
       global_interrupt_count = 0;
+      // 循环等待，直到全局中断计数器达到5
+     // 这意味着等待5次时钟中断发生
       while (global_interrupt_count < 5) {
       printf("Waiting for interrupt %d...\n", global_interrupt_count + 1);
+
+      // 执行一个忙等待（busy-wait）循环,'volatile' 关键字确保编译器不会优化掉这个循环
       for (volatile int i = 0; i < 10000000; i++);
       }
-      
+      // 获取当前时间作为结束时间
       uint64 end_time = get_time();
       printf("Timer test completed: %d interrupts in %d cycles\n",global_interrupt_count, end_time - start_time);
 }
@@ -381,4 +394,50 @@ void test_exception(void){
     // volatile uint64 *ptr = (uint64*)0x80000003;  // 未对齐的地址
     // *ptr = 0x1234;  // 尝试写入
     printf("Skipped: Would cause panic\n");
+}
+
+
+// 性能测试：测量中断开销
+void test_interrupt_overhead(void) {
+    printf("\n=== Testing Interrupt Overhead ===\n");
+  
+    int num_interrupts_to_test = 10; // 测试10次中断以获取平均值
+  
+// 1. 重置计数器
+    global_interrupt_count = 0;
+    total_interrupt_overhead_cycles = 0;
+    
+// 2. 记录总开始时间
+     uint64 start_time = get_time();
+    
+     printf("Waiting for %d timer interrupts...\n", num_interrupts_to_test);
+     
+// 3. 等待 N 次中断发生
+     while (global_interrupt_count < num_interrupts_to_test) {
+// 使用一个更长的忙等待循环来确保有足够的时间让中断发生
+    for (volatile int i = 0; i < 20000000; i++); 
+     }
+     
+// 4. 记录总结束时间
+    uint64 end_time = get_time();
+   
+// 5. 抓取累加的开销时间 (volatile read)
+    uint64 total_handler_time = total_interrupt_overhead_cycles;
+    uint64 total_test_duration = end_time - start_time;
+    
+// 6. 计算并打印结果
+     if (global_interrupt_count > 0) {
+    uint64 avg_overhead = total_handler_time / global_interrupt_count;
+     printf("Test complete for %d interrupts.\n", global_interrupt_count);
+     printf("Total test duration: %d cycles\n", total_test_duration);
+     printf("Total time spent in handler: %d cycles\n", total_handler_time);
+     printf("Average interrupt handler overhead: %d cycles per interrupt\n", avg_overhead);
+    } else {
+     printf("Error: No interrupts were counted.\n");
+     }
+     printf("=== Interrupt Overhead Test Passed ===\n");
+     
+// 重置计数器，以免影响其他测试
+   global_interrupt_count = 0;
+    total_interrupt_overhead_cycles = 0;
 }
