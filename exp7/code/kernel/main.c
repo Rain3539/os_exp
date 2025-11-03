@@ -356,7 +356,7 @@ void child_task(void) {
     
     // 使用 PID 构造唯一文件名
     snprintf(filename, sizeof(filename), "test_%d", p->pid);
-    
+    // 每个子进程循环10次，在循环中非常迅速地执行create-write-close-unlink
     for (int j = 0; j < 10; j++) { // (减少循环次数以加快测试)
         int fd = open(filename, O_CREATE | O_RDWR);
         if (fd >= 0) {
@@ -369,7 +369,7 @@ void child_task(void) {
     exit(0);
 }
 
-// 并发访问测试 (已修改为使用 create_process)
+// 并发访问测试 (使用 create_process)
 void test_concurrent_access(void) {
     printf("--- 2. Test: Concurrent Access ---\n");
     
@@ -388,7 +388,7 @@ void test_concurrent_access(void) {
         }
     }
     
-    // 等待所有子进程完成
+    // 等待所有子进程完成  父进程循环调用wait()4次，等待所有子进程执行完毕
     for (int i = 0; i < num_children; i++) {
         int status;
         int pid = wait(&status);
@@ -448,7 +448,7 @@ void test_crash_recovery(void) {
     r = read(fd, buf, sizeof(buf)-1);
     buf[r] = 0;
     close(fd);
-
+    //验证文件内容是否为 "Data-B"
     if(strcmp(buf, data_B) == 0) {
         printf("  [PASS] 'Data-B' was successfully recovered!\n");
     } else {
@@ -464,7 +464,7 @@ void test_filesystem_performance(void) {
     printf("--- 4. Test: Filesystem Performance ---\n");
     uint64 start_time;
     
-    // 大量小文件测试
+    // 大量小文件测试  创建100个小文件，每个文件写入4字节数据（元数据密集型操作）
     int n_small_files = 100;
     printf("  Task: Creating %d small files...\n", n_small_files);
     
@@ -479,7 +479,7 @@ void test_filesystem_performance(void) {
     }
     uint64 small_files_time = get_time() - start_time;
 
-    // 大文件测试
+    // 大文件测试  创建一个大文件，写入1MB数据（数据密集型操作）
     printf("  Task: Creating 1MB large file...\n");
     start_time = get_time();
     int fd = open("large_file", O_CREATE | O_RDWR);

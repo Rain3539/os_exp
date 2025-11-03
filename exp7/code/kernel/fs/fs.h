@@ -17,12 +17,6 @@ struct file;
 #define NINDIRECT (BSIZE / sizeof(uint))  // 间接块数量
 #define MAXFILE (NDIRECT + NINDIRECT)   // 文件最大块数
 
-// -----------------------------------------------------------------
-// *** 新增：哈希目录所需的宏 ***
-// -----------------------------------------------------------------
-#define DIRENTS_PER_BLOCK (BSIZE / sizeof(struct dirent))
-#define DIR_HASH_TABLE_SIZE MAXFILE
-// -----------------------------------------------------------------
 
 
 // 磁盘上的inode结构
@@ -115,8 +109,7 @@ struct inode* namei(char *path);
 struct inode* nameiparent(char *path, char *name);
 int           dirlink(struct inode *dp, char *name, uint inum);
 struct inode* dirlookup(struct inode *dp, char *name, uint *poff);
-int           unlink(const char *path); // <-- *** 新增 ***
-
+int           unlink(const char *path); 
 // file.c
 struct file* filealloc(void);
 void          fileclose(struct file *f);
@@ -124,7 +117,7 @@ struct file* filedup(struct file *f);
 int           fileread(struct file *f, uint64 addr, int n);
 int           filestat(struct file *f, uint64 addr);
 int           filewrite(struct file *f, uint64 addr, int n);
-void          fileinit(void); // <-- *** 新增 (你忘了这个) ***
+void          fileinit(void); 
 
 // 获取超级块
 void          readsb(int dev, struct superblock *sb);
