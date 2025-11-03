@@ -1,328 +1,31 @@
+// 主启动文件
+// 包含系统初始化、测试函数和启动流程
+
 #include "def.h"
 #include "type.h"
 #include "utils/console.h"
-#include "mm/memlayout.h"     // for PGSIZE
-#include "mm/riscv.h"         // for r_time
+#include "utils/string.h"
+#include "mm/memlayout.h"
+#include "mm/riscv.h"
 #include "fs/fs.h"
 #include "fs/bio.h"
 #include "fs/log.h"
 #include "fs/file.h"
-#include "proc/proc.h"        // 包含进程管理
+#include "fs/syscall_fs.h"
+#include "proc/proc.h"
 
-// 外部超级块
+// 外部变量和函数声明
 extern struct superblock sb;
-
-// 外部函数
-extern int simulate_crash_after_commit; // 访问 log.c 中的标志
+extern int simulate_crash_after_commit;
 extern pagetable_t create_pagetable(void);
 extern void free_pagetable(pagetable_t pagetable);
 extern void *kalloc(void);
 extern void kfree(void *pa);
+extern uint64 get_time(void);
 
 // =================================================================
-// 缺失的工具函数 (在内核中实现)
+// 测试1: 文件系统完整性测试
 // =================================================================
-#define NULL 0
-#define assert(x) if (!(x)) panic("assertion failed")
-
-int strlen(const char *s) {
-    int n = 0;
-    while(s[n])
-        n++;
-    return n;
-}
-
-int strcmp(const char *p, const char *q) {
-    while(*p && *p == *q)
-        p++, q++;
-    return (uchar)*p - (uchar)*q;
-}
-
-// -----------------------------------------------------------------
-// 修复: 更健壮的 snprintf (支持一个 %d)
-// -----------------------------------------------------------------
-// 简化的 itoa (整数到字符串)
-static void itoa(int n, char *buf) {
-    char temp[16];
-    int i = 0;
-    if (n == 0) {
-        buf[0] = '0';
-        buf[1] = '\0';
-        return;
-    }
-    
-    // 处理负数
-    int is_neg = n < 0;
-    if (is_neg) n = -n;
-
-    // 倒序填充
-    while (n > 0) {
-        temp[i++] = (n % 10) + '0';
-        n /= 10;
-    }
-    if (is_neg) temp[i++] = '-';
-    
-    // 倒序写回 buf
-    int j = 0;
-    while (i > 0) {
-        buf[j++] = temp[--i];
-    }
-    buf[j] = '\0';
-}
-
-// 简化的 snprintf，可正确处理一个 %d
-void snprintf(char *buf, int size, const char *fmt, ...) {
-    int *va = (int*)(&fmt + 1); // 获取第一个参数
-    int num_arg = *va;
-    char num_buf[16];          // 存放 %d 转换后的字符串
-    
-    char *p = buf;
-    const char *f = fmt;
-    
-    while(*f && (p - buf) < size - 1) {
-        if (*f == '%') {
-            f++;
-            if (*f == 'd') {
-                // 找到了 %d, 转换数字
-                itoa(num_arg, num_buf);
-                char *n_ptr = num_buf;
-                while (*n_ptr && (p - buf) < size - 1) {
-                    *p++ = *n_ptr++;
-                }
-            } else {
-                // 不支持的格式 (例如 %s), 只复制 '%'
-                *p++ = '%';
-            }
-        } else {
-            // 复制普通字符
-            *p++ = *f;
-        }
-        f++;
-    }
-    *p = '\0'; // 字符串结尾
-}
-// -----------------------------------------------------------------
-
-
-// =================================================================
-// 缺失的系统调用层实现
-// =================================================================
-
-// 分配文件描述符
-static int
-fdalloc(struct file *f)
-{
-  int fd;
-  struct proc *p = myproc();
-
-  for(fd = 0; fd < NOFILE; fd++){
-    if(p->ofile[fd] == 0){
-      p->ofile[fd] = f;
-      return fd;
-    }
-  }
-  return -1;
-}
-
-// 查找 inode
-// (这是 create 的辅助函数)
-static struct inode*
-create(char *path, short type, short major, short minor)
-{
-  struct inode *ip, *dp;
-  char name[DIRSIZ];
-
-  if((dp = nameiparent(path, name)) == 0)
-    return 0;
-
-  ilock(dp);
-
-  if((ip = dirlookup(dp, name, 0)) != 0){
-    iunlockput(dp);
-    ilock(ip);
-    if(type == T_FILE && ip->type == T_FILE)
-      return ip;
-    iunlockput(ip);
-    return 0;
-  }
-
-  if((ip = ialloc(dp->dev, type)) == 0)
-    panic("create: ialloc");
-
-  ilock(ip);
-  ip->major = major;
-  ip->minor = minor;
-  ip->nlink = 1;
-  iupdate(ip);
-
-  if(type == T_DIR){  // 创建 . 和 ..
-    dp->nlink++;  // .. 指向父目录
-    iupdate(dp);
-    // 链接 .
-    if(dirlink(ip, ".", ip->inum) < 0)
-      panic("create dots");
-    // 链接 ..
-    if(dirlink(ip, "..", dp->inum) < 0)
-      panic("create dots");
-  }
-
-  if(dirlink(dp, name, ip->inum) < 0)
-    panic("create: dirlink");
-
-  iunlockput(dp);
-  return ip;
-}
-
-// open (实现了 O_CREATE, O_RDWR, O_RDONLY, O_WRONLY, O_TRUNC)
-int open(const char *path, int omode)
-{
-  int fd;
-  struct file *f;
-  struct inode *ip;
-
-  begin_op();
-
-  if(omode & O_CREATE){
-    ip = create((char*)path, T_FILE, 0, 0);
-    if(ip == 0){
-      end_op();
-      return -1;
-    }
-  } else {
-    if((ip = namei((char*)path)) == 0){
-      end_op();
-      return -1;
-    }
-    ilock(ip);
-    if(ip->type == T_DIR){
-      iunlockput(ip);
-      end_op();
-      return -1;
-    }
-  }
-
-  // O_TRUNC (截断) 逻辑
-  if(omode & O_TRUNC){
-    if(ip->type != T_FILE)
-        panic("O_TRUNC on non-file");
-    
-    // itrunc 会清空文件大小和数据块
-    itrunc(ip); 
-  }
-
-  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
-    if(f)
-      fileclose(f);
-    iunlockput(ip);
-    end_op();
-    return -1;
-  }
-
-  f->type = FD_INODE;
-  f->ip = ip;
-  f->off = 0; // 截断或新文件，偏移量都为0
-  f->readable = !(omode & O_WRONLY);
-  f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
-
-  iunlock(ip);
-  end_op();
-  return fd;
-}
-
-// read
-int read(int fd, void *buf, int n)
-{
-  struct file *f;
-  struct proc *p = myproc();
-  if(fd < 0 || fd >= NOFILE || (f=p->ofile[fd]) == 0)
-    return -1;
-  
-  return fileread(f, (uint64)buf, n);
-}
-
-// write
-int write(int fd, const void *buf, int n)
-{
-  struct file *f;
-  struct proc *p = myproc();
-  if(fd < 0 || fd >= NOFILE || (f=p->ofile[fd]) == 0)
-    return -1;
-
-  return filewrite(f, (uint64)buf, n);
-}
-
-// close
-int close(int fd)
-{
-  struct file *f;
-  struct proc *p = myproc();
-  if(fd < 0 || fd >= NOFILE || (f=p->ofile[fd]) == 0)
-    return -1;
-
-  p->ofile[fd] = 0;
-  fileclose(f);
-  return 0;
-}
-
-// unlink 
-int unlink(const char *path)
-{
-  struct inode *ip, *dp;
-  struct dirent de;
-  char name[DIRSIZ];
-  uint off;
-
-  begin_op();
-  if((dp = nameiparent((char*)path, name)) == 0){
-    end_op();
-    return -1;
-  }
-
-  ilock(dp);
-
-  // 查找目录项
-  if(dirlookup(dp, name, &off) == 0){
-    iunlockput(dp);
-    end_op();
-    return -1;
-  }
-
-  // 获取 inode
-  if((ip = dirlookup(dp, name, 0)) == 0)
-    panic("unlink: dirlookup failed");
-  ilock(ip);
-
-  if(ip->nlink < 1)
-    panic("unlink: nlink < 1");
-  if(ip->type == T_DIR){
-    iunlockput(ip);
-    iunlockput(dp);
-    end_op();
-    return -1; // 不允许 unlink 目录
-  }
-
-  // 擦除目录项
-  memset(&de, 0, sizeof(de));
-  if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
-    panic("unlink: writei");
-  
-  iunlockput(dp);
-
-  // 减少链接数
-  ip->nlink--;
-  iupdate(ip);
-  iunlockput(ip);
-
-  end_op();
-  return 0;
-}
-
-// =================================================================
-// 文件系统测试套件
-// =================================================================
-
-
-// 文件系统完整性测试
 void test_filesystem_integrity(void) {
     printf("--- 1. Test: Filesystem Integrity ---\n");
     
@@ -351,15 +54,20 @@ void test_filesystem_integrity(void) {
     printf("  [PASS] Filesystem integrity test passed.\n");
 }
 
-// test_concurrent_access 的子进程任务
+// =================================================================
+// 测试2: 并发访问测试
+// =================================================================
+
+// 子进程任务
 void child_task(void) {
     struct proc *p = myproc();
     char filename[32];
     
     // 使用 PID 构造唯一文件名
     snprintf(filename, sizeof(filename), "test_%d", p->pid);
-    // 每个子进程循环10次，在循环中非常迅速地执行create-write-close-unlink
-    for (int j = 0; j < 10; j++) { // (减少循环次数以加快测试)
+    
+    // 每个子进程循环10次，快速执行create-write-close-unlink
+    for (int j = 0; j < 10; j++) {
         int fd = open(filename, O_CREATE | O_RDWR);
         if (fd >= 0) {
             write(fd, &j, sizeof(j));
@@ -371,7 +79,7 @@ void child_task(void) {
     exit(0);
 }
 
-// 并发访问测试 (使用 create_process)
+// 并发访问测试主函数
 void test_concurrent_access(void) {
     printf("--- 2. Test: Concurrent Access ---\n");
     
@@ -390,7 +98,7 @@ void test_concurrent_access(void) {
         }
     }
     
-    // 等待所有子进程完成  父进程循环调用wait()4次，等待所有子进程执行完毕
+    // 等待所有子进程完成
     for (int i = 0; i < num_children; i++) {
         int status;
         int pid = wait(&status);
@@ -400,7 +108,9 @@ void test_concurrent_access(void) {
     printf("  [PASS] Concurrent access test completed.\n");
 }
 
-// 崩溃恢复测试 (模拟重放)
+// =================================================================
+// 测试3: 崩溃恢复测试
+// =================================================================
 void test_crash_recovery(void) {
     printf("--- 3. Test: Crash Recovery (Replay) ---\n");
     char buf[64];
@@ -409,7 +119,7 @@ void test_crash_recovery(void) {
     const char *data_B = "Crash-Data-B";
     int fd, r;
 
-    // --- 1. Setup: 创建一个文件并写入 "Data-A" ---
+    // 步骤1: 创建一个文件并写入 "Data-A"
     printf("  1. Setup: Creating '%s' with 'Data-A'\n", path);
     fd = open(path, O_CREATE | O_RDWR);
     if(fd < 0) panic("crash test setup open failed");
@@ -417,12 +127,12 @@ void test_crash_recovery(void) {
         panic("crash test setup write failed");
     close(fd);
 
-    // --- 2. 模拟崩溃 ---
+    // 步骤2: 模拟崩溃
     printf("  2. Crash: Writing 'Data-B' with O_TRUNC...\n");
     
     simulate_crash_after_commit = 1; // 激活崩溃模拟标志
     
-    fd = open(path, O_RDWR | O_TRUNC); // 使用 O_TRUNC
+    fd = open(path, O_RDWR | O_TRUNC);
     if(fd < 0) panic("crash test open 2 failed");
     
     r = write(fd, data_B, strlen(data_B));
@@ -433,7 +143,7 @@ void test_crash_recovery(void) {
     
     simulate_crash_after_commit = 0; // 关闭标志
 
-    // --- 3. 模拟重启 ---
+    // 步骤3: 模拟重启
     printf("  3. Reboot: Simulating system reboot...\n");
     
     // 模拟 RAM 丢失 (清除块缓存)
@@ -442,7 +152,7 @@ void test_crash_recovery(void) {
     // 模拟内核启动 (重载日志系统)
     initlog(1, &sb);
 
-    // --- 4. 验证重放 ---
+    // 步骤4: 验证重放
     printf("  4. Verify: Checking for 'Data-B'\n");
     fd = open(path, O_RDONLY);
     if(fd < 0) panic("crash test verify open failed");
@@ -450,7 +160,8 @@ void test_crash_recovery(void) {
     r = read(fd, buf, sizeof(buf)-1);
     buf[r] = 0;
     close(fd);
-    //验证文件内容是否为 "Data-B"
+    
+    // 验证文件内容
     if(strcmp(buf, data_B) == 0) {
         printf("  [PASS] 'Data-B' was successfully recovered!\n");
     } else {
@@ -461,12 +172,14 @@ void test_crash_recovery(void) {
     unlink(path);
 }
 
-// 性能测试
+// =================================================================
+// 测试4: 性能测试
+// =================================================================
 void test_filesystem_performance(void) {
     printf("--- 4. Test: Filesystem Performance ---\n");
     uint64 start_time;
     
-    // 大量小文件测试  创建100个小文件，每个文件写入4字节数据（元数据密集型操作）
+    // 大量小文件测试 - 创建100个小文件，每个文件写入4字节数据（元数据密集型操作）
     int n_small_files = 100;
     printf("  Task: Creating %d small files...\n", n_small_files);
     
@@ -481,7 +194,7 @@ void test_filesystem_performance(void) {
     }
     uint64 small_files_time = get_time() - start_time;
 
-    // 大文件测试  创建一个大文件，写入1MB数据（数据密集型操作）
+    // 大文件测试 - 创建一个大文件，写入1MB数据（数据密集型操作）
     printf("  Task: Creating 1MB large file...\n");
     start_time = get_time();
     int fd = open("large_file", O_CREATE | O_RDWR);
@@ -507,9 +220,8 @@ void test_filesystem_performance(void) {
     printf("  [PASS] Performance test finished.\n");
 }
 
-
 // =================================================================
-// 内核的第一个进程
+// 内核第一个进程 - init
 // =================================================================
 void init_main(void) {
     printf("\n[Init Process Started] Running test suite...\n\n");
@@ -527,7 +239,7 @@ void init_main(void) {
 }
 
 // =================================================================
-// 主函数
+// 内核主函数
 // =================================================================
 void main(void) {
     printf("My RISC-V OS Starting...\r\n");
