@@ -7,6 +7,14 @@
 // 最大进程数
 #define NPROC 64
 #define NOFILE 16 // 每个进程最大打开文件数
+
+// 优先级调度相关常量
+#define MIN_PRIORITY 0      // 最低优先级
+#define MAX_PRIORITY 10     // 最高优先级
+#define DEFAULT_PRIORITY 5  // 默认优先级
+#define AGING_THRESHOLD 5 // Aging阈值（ticks）
+#define AGING_BOOST 1       // Aging时增加的优先级
+
 // 进程状态枚举
 enum procstate { 
   UNUSED,    // 未使用
@@ -49,7 +57,12 @@ struct cpu {
 struct proc {
   enum procstate state;        // 进程状态
   int pid;                     // 进程ID
-  int priority;                // 优先级(0-4,数字越小优先级越高)
+  
+  // 优先级调度相关字段
+  int priority;                // 优先级(0-10,数字越大优先级越高)
+  int ticks;                   // 已使用的CPU时间片
+  int wait_time;               // 等待时长（用于aging）
+  
   pagetable_t pagetable;       // 用户页表
   struct trapframe *trapframe; // 陷阱帧指针
   struct context context;      // 进程调度上下文
@@ -85,6 +98,11 @@ void freeproc(struct proc *p);
 void push_off(void);
 void pop_off(void);
 struct proc* allocproc(void);
+
+// 优先级调度相关函数
+struct proc* select_highest_priority(void);
+void aging_update(void);
+
 // 汇编函数声明
 void swtch(struct context *old, struct context *new);
 

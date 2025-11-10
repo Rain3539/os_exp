@@ -1,4 +1,4 @@
-// 进程管理核心实现
+// 进程管理核心实现 - 优先级调度版本
 #include "proc.h"
 #include "../def.h"
 #include "../mm/memlayout.h"
@@ -43,7 +43,6 @@ proc_entry(void)
   if(p->entry_func) {
     p->entry_func();
   } else {
-    // 理论上不应该发生
     panic("proc_entry: no entry function");
   }
   
@@ -52,7 +51,6 @@ proc_entry(void)
 }
 
 // 分配一个进程结构体
-// 成功返回进程指针，失败返回0
 struct proc*
 allocproc(void)
 {
@@ -69,7 +67,9 @@ allocproc(void)
 found:
   p->pid = nextpid++;
   p->state = USED;
-  p->priority = 2;  // 默认优先级为中等
+  p->priority = DEFAULT_PRIORITY;  // 设置默认优先级
+  p->ticks = 0;                    // 初始化CPU时间
+  p->wait_time = 0;                // 初始化等待时间
   p->entry_func = 0;
   
   // 分配陷阱帧
@@ -84,9 +84,6 @@ found:
     return 0;
   }
 
-  // 设置内核栈
-  // p->kstack = KSTACK((int) (p - proc));
-
   // 为内核栈分配一个物理页
   if((p->kstack = (uint64)kalloc()) == 0) {
     freeproc(p);
@@ -100,7 +97,7 @@ found:
   p->context.ra = (uint64)proc_entry;
   p->context.sp = p->kstack + PGSIZE;
   
-  memset(p->ofile, 0, sizeof(p->ofile)); // 初始化文件表
+  memset(p->ofile, 0, sizeof(p->ofile));
   return p;
 }
 
@@ -108,21 +105,18 @@ found:
 void
 freeproc(struct proc *p)
 {
-  //1.释放trapframe
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  //2.释放页表
+  
   if(p->pagetable)
     free_pagetable(p->pagetable);
   p->pagetable = 0;
 
-  // 释放内核栈
   if(p->kstack)
       kfree((void*)p->kstack);
   p->kstack = 0;
   
-  //3.清空字段
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -131,7 +125,9 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->entry_func = 0;
-  //4.设置状态为UNUSED
+  p->priority = DEFAULT_PRIORITY;
+  p->ticks = 0;
+  p->wait_time = 0;
   p->state = UNUSED;
 }
 
@@ -143,48 +139,96 @@ procinit(void)
   
   for(p = proc; p < &proc[NPROC]; p++) {
     p->state = UNUSED;
-    p->kstack = 0; // KSTACK宏不再需要，在allocproc中实际分配
+    p->kstack = 0;
+    p->priority = DEFAULT_PRIORITY;
+    p->ticks = 0;
+    p->wait_time = 0;
   }
   
-  // 初始化CPU的context为0
   memset(&cpus[0].context, 0, sizeof(struct context));
   cpus[0].noff = 0;
   cpus[0].intena = 0;
+  
+  printf("进程系统初始化完成 (优先级调度)\n");
+  printf("优先级范围: %d-%d, 默认优先级: %d\n", 
+         MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY);
 }
 
 // 创建一个新进程
-// entry: 进程入口函数
-// name: 进程名称
-// priority: 进程优先级
 int
 create_process(void (*entry)(void), char *name, int priority)
 {
-  //1.分配进程
   struct proc *p;
   
   p = allocproc();
   if(p == 0) {
     return -1;
   }
+  
   p->parent = myproc();
-  // 2.设置进程名称
+  
+  // 设置进程名称
   int i;
   for(i = 0; i < 15 && name[i]; i++) {
     p->name[i] = name[i];
   }
   p->name[i] = 0;
 
-  // 3.设置优先级
+  // 设置优先级（检查范围）
+  if(priority < MIN_PRIORITY) priority = MIN_PRIORITY;
+  if(priority > MAX_PRIORITY) priority = MAX_PRIORITY;
   p->priority = priority;
 
-  // 4.保存入口函数
+  // 保存入口函数
   p->entry_func = entry;
   
-  // 5.设置为可运行状态
+  // 设置为可运行状态
   p->state = RUNNABLE;
   
-  //6.返回进程ID
   return p->pid;
+}
+
+// 选择最高优先级的可运行进程
+struct proc*
+select_highest_priority(void)
+{
+  struct proc *p, *best = 0;
+  int best_priority = MIN_PRIORITY - 1;
+  
+  for(p = proc; p < &proc[NPROC]; p++) {
+    if(p->state == RUNNABLE) {
+      // 选择优先级最高的进程（数字越大优先级越高）
+      if(p->priority > best_priority) {
+        best_priority = p->priority;
+        best = p;
+      }
+    }
+  }
+  
+  return best;
+}
+
+// Aging机制：防止进程饥饿
+void
+aging_update(void)
+{
+  struct proc *p;
+  
+  for(p = proc; p < &proc[NPROC]; p++) {
+    if(p->state == RUNNABLE) {
+      p->wait_time++;
+      
+      // 如果等待时间超过阈值，提升优先级
+      if(p->wait_time >= AGING_THRESHOLD) {
+        if(p->priority < MAX_PRIORITY) {
+          p->priority += AGING_BOOST;
+          printf("[AGING] Process %d (%s): priority boosted to %d\n", 
+                 p->pid, p->name, p->priority);
+        }
+        p->wait_time = 0;  // 重置等待时间
+      }
+    }
+  }
 }
 
 // 进程主动让出CPU
@@ -195,6 +239,7 @@ yield(void)
   
   if(p) {
     p->state = RUNNABLE;
+    p->wait_time = 0;  // 重置等待时间
   }
   sched();
 }
@@ -222,7 +267,7 @@ sched(void)
   }
 }
 
-// 调度器 - 优先级调度算法
+// 调度器 - 优先级调度算法（带Aging）
 void
 scheduler(void)
 {
@@ -231,53 +276,54 @@ scheduler(void)
   
   c->proc = 0;
   
-  printf("Scheduler started, looking for runnable processes...\r\n");
+  printf("调度器启动 - 优先级调度算法 (带Aging机制)\n");
   
-  int count = 0;
+  int idle_count = 0;
+  int aging_counter = 0;
+  
   for(;;){
     // 开启中断，允许设备中断
     intr_on();
     
-    // 优先级调度：选择优先级最高（数字最小）的RUNNABLE进程
-    struct proc *best = 0;
-    int best_priority = 100;  // 初始化为一个很大的值
-    
-    for(p = proc; p < &proc[NPROC]; p++) {
-      if(p->state == RUNNABLE) {
-        if(p->priority < best_priority) {
-          best_priority = p->priority;
-          best = p;
-        }
-      }
+    // 周期性执行aging更新
+    aging_counter++;
+    if(aging_counter >= 10) {  // 每10次调度循环执行一次aging
+      aging_update();
+      aging_counter = 0;
     }
     
+    // 选择优先级最高的可运行进程
+    p = select_highest_priority();
+    
     // 如果找到可运行的进程，切换过去
-    if(best) {
-      p = best;
+    if(p) {
+      idle_count = 0;  // 重置空闲计数
       
       p->state = RUNNING;
+      p->wait_time = 0;  // 重置等待时间
       c->proc = p;
       
+      // 切换到进程
       swtch(&c->context, &p->context);
       
-      // 进程切换回来
+      // 进程切换回来后
       c->proc = 0;
       
-      // --- 新增：在这里打印进程表，展示状态变化 ---
-      // debug_proc_table(); 
-
+      // 更新进程统计信息
+      if(p->state == RUNNABLE || p->state == RUNNING) {
+        p->ticks++;  // 增加CPU使用时间
+      }
+      
     } else {
       // 没有可运行的进程
-      if(count % 100000000 == 0) {
-        printf("No runnable processes\r\n");
+      idle_count++;
+      if(idle_count % 100000000 == 0) {
+        printf("[SCHEDULER] No runnable processes (idle count: %d)\n", idle_count);
       }
-      count++;
     }
   }
 }
 
-
-//进程同步相关函数实现
 // 进程睡眠（等待条件）
 void
 sleep(void *chan)
@@ -289,6 +335,7 @@ sleep(void *chan)
 
   p->chan = chan;
   p->state = SLEEPING;
+  p->wait_time = 0;  // 睡眠时重置等待时间
 
   sched();
 
@@ -305,6 +352,7 @@ wakeup(void *chan)
   for(p = proc; p < &proc[NPROC]; p++) {
     if(p != myproc() && p->state == SLEEPING && p->chan == chan){
       p->state = RUNNABLE;
+      p->wait_time = 0;  // 唤醒时重置等待时间
     }
   }
 }
@@ -318,15 +366,13 @@ exit(int status)
   if(p == initproc)
     panic("init exiting");
 
-  // 关闭所有打开的文件（这里简化，不实现文件系统）
-  // --- 添加文件关闭逻辑 ---
+  // 关闭所有打开的文件
   for(int fd = 0; fd < NOFILE; fd++){
     if(p->ofile[fd]){
       fileclose(p->ofile[fd]);
       p->ofile[fd] = 0;
     }
   }
-
 
   // 唤醒父进程
   if(p->parent)
@@ -361,13 +407,11 @@ wait(int *status)
   int pid;
 
   for(;;){
-    // 扫描进程表找子进程
     havekids = 0;
     for(pp = proc; pp < &proc[NPROC]; pp++){
       if(pp->parent == p){
         havekids = 1;
         if(pp->state == ZOMBIE){
-          // 找到退出的子进程
           pid = pp->pid;
           if(status != 0)
             *status = pp->xstate;
@@ -377,12 +421,10 @@ wait(int *status)
       }
     }
 
-    // 没有子进程
     if(!havekids){
       return -1;
     }
 
-    // 等待子进程退出
     sleep(p);
   }
 }
@@ -397,7 +439,6 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       if(p->state == SLEEPING){
-        // 唤醒进程，让它退出
         p->state = RUNNABLE;
       }
       return 0;
@@ -407,9 +448,8 @@ kill(int pid)
 }
 
 // 进程状态调试
-void debug_proc_table(void) {
-  // 定义状态字符串数组
-  // 确保这些枚举值 (UNUSED, SLEEPING 等) 在 proc.h 中定义
+void 
+debug_proc_table(void) {
   static char *states[] = {
       [UNUSED]   "UNUSED",
       [USED]     "USED",
@@ -419,26 +459,24 @@ void debug_proc_table(void) {
       [ZOMBIE]   "ZOMBIE"
   };
   
-  printf("=== Process Table ===\n");
-  printf("PID\tPriority\tState\t\tName\n"); // 添加表头
-  printf("--------------------------------------------\n"); // 添加分隔符
+  printf("\n=== Process Table ===\n");
+  printf("PID\tPriority\tTicks\tWait\tState\t\tName\n");
+  printf("------------------------------------------------------------------\n");
 
   for (int i = 0; i < NPROC; i++) {
       struct proc *p = &proc[i];
       if (p->state != UNUSED) {
-          
-          // 确保状态在范围内，防止数组越界
           char *state_str = "UNKNOWN";
           if(p->state >= UNUSED && p->state <= ZOMBIE) {
               state_str = states[p->state];
           }
 
-          // 修改 printf，加入 p->priority
-          printf("%d\t%d\t\t%s\t\t%s\n",
-                 p->pid, p->priority, state_str, p->name);
+          printf("%d\t%d\t\t%d\t%d\t%s\t\t%s\n",
+                 p->pid, p->priority, p->ticks, p->wait_time, 
+                 state_str, p->name);
       }
   }
-  printf("============================================\n"); // 结束符
+  printf("==================================================================\n\n");
 }
 
 // 关闭中断（嵌套）

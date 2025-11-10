@@ -1,3 +1,6 @@
+#ifndef DEF_H
+#define DEF_H
+
 #include "type.h"
 #include "mm/riscv.h"
 
@@ -11,7 +14,7 @@
         } \
     } while(0)
 
-//printf.c
+// ========== 控制台和输出函数 ==========
 void printint(long long value, int base, int sgn);
 void printf(const char *fmt, ...);
 void panic(char *s);
@@ -22,36 +25,28 @@ void set_text_color(const char *color);
 void set_background_color(const char *color);
 void reset_colors(void);
 void printf_color(const char *color, const char *fmt, ...);
-
-//uart.c
 void uart_putc(char c);
-
-//console.c
 void cons_putc(int c);
 void cons_puts(const char *s);
 
-// kalloc.c
-void*           kalloc(void);
-void            kfree(void *);
-void            kinit(void);
-
-// string.c
+// ========== 内存管理函数 ==========
+void* kalloc(void);
+void  kfree(void *);
+void  kinit(void);
 void* memset(void *dst, int c, uint n);
 
+// ========== 虚拟内存管理函数 ==========
+void        kvminit(void);
+void        kvminithart(void);
+void        kvmmap(pagetable_t, uint64, uint64, uint64, int);
+int         mappages(pagetable_t, uint64, uint64, uint64, int);
+pagetable_t create_pagetable(void);
+void        free_pagetable(pagetable_t);
+pte_t*      walk(pagetable_t, uint64, int);
+uint64      walkaddr(pagetable_t, uint64);
+int         ismapped(pagetable_t, uint64);
 
-// vm.c
-void            kvminit(void);
-void            kvminithart(void);
-void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
-
-int             mappages(pagetable_t, uint64, uint64, uint64, int);
-pagetable_t     create_pagetable(void);
-void            free_pagetable(pagetable_t);
-pte_t *         walk(pagetable_t, uint64, int);
-uint64          walkaddr(pagetable_t, uint64);
-int             ismapped(pagetable_t, uint64);
-
-// trap.c
+// ========== 陷阱处理函数 ==========
 void trapinithart(void);
 void test_timer_interrupt(void);
 void test_breakpoint(void);
@@ -61,43 +56,31 @@ void test_exception(void);
 // 全局变量外部声明
 extern volatile int global_interrupt_count;
 
-// RISC-V异常和中断类型定义
+// ========== RISC-V异常和中断类型定义 ==========
 #define CAUSE_INTERRUPT_FLAG    0x8000000000000000L
 
-// 异常类型 (scause & ~CAUSE_INTERRUPT_FLAG)
-#define CAUSE_INSTRUCTION_MISALIGNED    0 // 指令地址未对齐
-#define CAUSE_INSTRUCTION_ACCESS_FAULT  1 // 指令访问故障
-#define CAUSE_ILLEGAL_INSTRUCTION       2 // 非法指令
-#define CAUSE_BREAKPOINT               3 // 断点指令
-#define CAUSE_LOAD_MISALIGNED          4 // 加载地址未对齐
-#define CAUSE_LOAD_ACCESS_FAULT        5 // 加载访问故障
-#define CAUSE_STORE_MISALIGNED         6 // 存储地址未对齐
-#define CAUSE_STORE_ACCESS_FAULT       7 // 存储访问故障
-#define CAUSE_USER_ECALL               8 // 用户模式系统调用
-#define CAUSE_SUPERVISOR_ECALL         9 // 特权模式系统调用
-#define CAUSE_MACHINE_ECALL            11 // 机器模式系统调用
-#define CAUSE_INSTRUCTION_PAGE_FAULT   12 // 指令页故障
-#define CAUSE_LOAD_PAGE_FAULT          13 // 加载页故障
-#define CAUSE_STORE_PAGE_FAULT         15 // 存储页故障
+// 异常类型
+#define CAUSE_INSTRUCTION_MISALIGNED    0
+#define CAUSE_INSTRUCTION_ACCESS_FAULT  1
+#define CAUSE_ILLEGAL_INSTRUCTION       2
+#define CAUSE_BREAKPOINT               3
+#define CAUSE_LOAD_MISALIGNED          4
+#define CAUSE_LOAD_ACCESS_FAULT        5
+#define CAUSE_STORE_MISALIGNED         6
+#define CAUSE_STORE_ACCESS_FAULT       7
+#define CAUSE_USER_ECALL               8
+#define CAUSE_SUPERVISOR_ECALL         9
+#define CAUSE_MACHINE_ECALL            11
+#define CAUSE_INSTRUCTION_PAGE_FAULT   12
+#define CAUSE_LOAD_PAGE_FAULT          13
+#define CAUSE_STORE_PAGE_FAULT         15
 
-// 中断类型 (scause & ~CAUSE_INTERRUPT_FLAG)
-#define CAUSE_SOFTWARE_INTERRUPT       1 // 软件中断
-#define CAUSE_TIMER_INTERRUPT          5 // 定时器中断
-#define CAUSE_EXTERNAL_INTERRUPT       9 // 外部中断
+// 中断类型
+#define CAUSE_SOFTWARE_INTERRUPT       1
+#define CAUSE_TIMER_INTERRUPT          5
+#define CAUSE_EXTERNAL_INTERRUPT       9
 
-// 系统调用号定义
-#define SYS_EXIT    1
-#define SYS_GETPID  2
-#define SYS_FORK    3
-#define SYS_WAIT    4
-#define SYS_READ    5
-#define SYS_WRITE   6
-#define SYS_OPEN    7
-#define SYS_CLOSE   8
-#define SYS_EXEC    9
-#define SYS_SBRK    10
-
-// 陷阱帧结构体定义
+// ========== 陷阱帧结构体定义 ==========
 struct trapframe {
      /*   0 */ uint64 ra;
     /*   8 */ uint64 sp;
@@ -130,49 +113,43 @@ struct trapframe {
     /* 224 */ uint64 t4;
     /* 232 */ uint64 t5;
     /* 240 */ uint64 t6;
-    /* 248 */ uint64 epc;    // 单独处理，不在栈上
+    /* 248 */ uint64 epc;
 };
 
-// 异常处理函数声明
+// ========== 异常处理函数声明 ==========
 void handle_exception(struct trapframe *tf);
 void handle_syscall(struct trapframe *tf);
 void handle_instruction_page_fault(struct trapframe *tf);
 void handle_load_page_fault(struct trapframe *tf);
 void handle_store_page_fault(struct trapframe *tf);
 
-// syscall.c
-uint64 sys_exit(void);
-uint64 sys_getpid(void);
-uint64 sys_fork(void);
-uint64 sys_wait(void);
-uint64 sys_read(void);
-uint64 sys_write(void);
-uint64 sys_open(void);
-uint64 sys_close(void);
-uint64 sys_exec(void);
-uint64 sys_sbrk(void);
-
-// proc.c - 进程管理函数
+// ========== 进程管理函数（来自proc.c） ==========
 struct proc;
 struct cpu;
 struct context;
-void            procinit(void);
-struct cpu*     mycpu(void);
-struct proc*    myproc(void);
-int             create_process(void (*entry)(void), char *name, int priority);
-void            yield(void);
-void            sched(void);
-void            scheduler(void) __attribute__((noreturn));
-void            forkret(void);
-void            sleep(void *chan);
-void            wakeup(void *chan);
-void            exit(int status) __attribute__((noreturn));
-int             wait(int *status);
-int             kill(int pid);
-void            debug_proc_table(void);
-void            push_off(void);
-void            pop_off(void);
 
-// swtch.S
-void            swtch(struct context*, struct context*);
+void         procinit(void);
+struct cpu*  mycpu(void);
+struct proc* myproc(void);
+int          create_process(void (*entry)(void), char *name, int priority);
+void         yield(void);
+void         sched(void);
+void         scheduler(void) __attribute__((noreturn));
+void         forkret(void);
+void         sleep(void *chan);
+void         wakeup(void *chan);
+void         exit(int status) __attribute__((noreturn));
+int          wait(int *status);
+int          kill(int pid);
+void         debug_proc_table(void);
+void         push_off(void);
+void         pop_off(void);
+void         swtch(struct context*, struct context*);
 
+// ========== 文件系统函数（来自fs/）==========
+struct file;
+
+void         fileinit(void);
+void         fileclose(struct file *f);
+
+#endif // DEF_H
