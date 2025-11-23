@@ -15,6 +15,8 @@ static int nextpid = 1;
 // 初始进程（idle进程）
 struct proc *initproc;
 
+static int last_selected_idx = -1;
+
 // 获取当前CPU
 struct cpu*
 mycpu(void) 
@@ -194,15 +196,24 @@ select_highest_priority(void)
 {
   struct proc *p, *best = 0;
   int best_priority = MIN_PRIORITY - 1;
+  int found = 0;
   
-  for(p = proc; p < &proc[NPROC]; p++) {
+  // 从上次选择的位置之后开始搜索
+  int start_idx = (last_selected_idx + 1) % NPROC;
+  
+  for(int i = 0; i < NPROC; i++) {
+    p = &proc[(start_idx + i) % NPROC];
     if(p->state == RUNNABLE) {
-      // 选择优先级最高的进程（数字越大优先级越高）
       if(p->priority > best_priority) {
         best_priority = p->priority;
         best = p;
+        found = 1;
       }
     }
+  }
+  
+  if(found) {
+    last_selected_idx = best - proc;  // 保存本次选择的索引
   }
   
   return best;
