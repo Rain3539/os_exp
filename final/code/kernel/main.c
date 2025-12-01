@@ -50,11 +50,11 @@ void main(void) {
   // 测试1: 不同优先级测试
   // test_priority_scheduling();
   
-  // 测试2: Aging机制测试（可选）
-  test_aging_mechanism();
+  // 测试2: Aging机制测试
+  // test_aging_mechanism();
   
-  // 测试3: 相同优先级测试（可选）
-  // test_same_priority();
+  // 测试3: 相同优先级测试
+  test_same_priority();
 
   printf("\n=== All Test Processes Created ===\n\n");
 
@@ -210,8 +210,8 @@ void aging_test_task_high(void) {
   struct proc *p = myproc();
   printf("[CPU_HOG] Process %d started (Priority=%d)\n", p->pid, p->priority);
   
-  for(int i = 0; i < 10; i++) {
-    printf("[CPU_HOG] Running %d/10\n", i+1);
+  for(int i = 0; i < 50; i++) {
+    printf("[CPU_HOG] Running %d/50\n", i+1);
     
 
     for(volatile int j = 0; j < 10000000; j++);  
