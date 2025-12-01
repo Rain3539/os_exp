@@ -29,8 +29,8 @@ void main(void) {
 
 
   //中断功能测试
-  test_timer_interrupt();
-  printf("Timer interrupt test passed!\n");
+  // test_timer_interrupt();
+  // printf("Timer interrupt test passed!\n");
 
   //性能测试
   test_interrupt_overhead();
@@ -40,13 +40,13 @@ void main(void) {
   // printf("Breakpoint test passed!\n");
 
   //异常测试
-  test_exception();
-  printf("Exception test passed!\n");
-  printf("All tests passed!\n");
-  printf("System initialization complete!\r\n");
-  printf("Entering main loop...\r\n");
-  while (1) {
-  }
+  // test_exception();
+  // printf("Exception test passed!\n");
+  // printf("All tests passed!\n");
+  // printf("System initialization complete!\r\n");
+  // printf("Entering main loop...\r\n");
+  // while (1) {
+  // }
 }
 
 

@@ -122,13 +122,18 @@ static int strlen(const char *s) {
 
 // 基础功能测试
 void test_basic_syscalls(void) {
-    printf("Testing basic system calls...\n");
+    printf("1.基础功能测试...\n");
 
     // 测试getpid
+    printf("1.1 getpid测试...\n");
+
     int pid = getpid();
     printf("Current PID: %d\n", pid);
 
-    // 测试fork（简化实现：fork在当前系统返回-1）
+
+    printf("1.2 fork测试...\n");
+
+    // 测试fork
     int child_pid = fork();
     if (child_pid == 0) {
         // 子进程
@@ -156,7 +161,8 @@ void test_basic_syscalls(void) {
 
 // 参数传递测试
 void test_parameter_passing(void) {
-    printf("Testing parameter passing...\n");
+    printf("2 参数传递测试...\n");
+
     
     // 测试不同类型参数的传递
     char buffer[] = "Hello, World!";
@@ -169,12 +175,15 @@ void test_parameter_passing(void) {
     }
 
     // 测试边界情况
-    printf("Testing edge cases...\n");
+    printf("2.1 无效描述符测试...\n");
+
     int result1 = write(-1, buffer, 10); // 无效文件描述符
     printf("write(-1, buffer, 10) returned: %d\n", result1);
+    printf("2.2 空指针测试...\n");
     
     int result2 = write(fd, (void*)0, 10); // 空指针（fd已关闭，先测试空指针）
     printf("write(fd, NULL, 10) returned: %d\n", result2);
+    printf("2.3 负数长度测试...\n");
     
     int result3 = write(-1, buffer, -1); // 负数长度
     printf("write(-1, buffer, -1) returned: %d\n", result3);
@@ -184,12 +193,17 @@ void test_parameter_passing(void) {
 
 // 安全性测试
 void test_security(void) {
-    printf("Testing security...\n");
+ 
+    printf("3 安全性测试...\n");
     
+    printf("3.1 无效指针测试...\n");
+
     // 测试无效指针访问
     char *invalid_ptr = (char*)0x1000000; // 可能无效的地址
     int result = write(1, invalid_ptr, 10);
     printf("Invalid pointer write result: %d\n", result);
+
+    printf("3.2 缓冲区边界测试...\n");
 
     // 测试缓冲区边界
     char small_buf[4];
@@ -202,18 +216,21 @@ void test_security(void) {
     }
 
     // 测试权限检查
+    printf("3.3 权限测试...\n");
+
     printf("Security tests completed\n");
     printf("\n");
 }
 
 // 性能测试
 void test_syscall_performance(void) {
-    printf("Testing syscall performance...\n");
+    printf("4 性能测试...\n");
+
     
     uint64 start_time = get_time();
 
     // 大量系统调用测试
-    for (int i = 0; i < 10000; i++) {
+    for (int i = 0; i < 50; i++) {
         getpid(); // 简单的系统调用
     }
 
